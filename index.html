@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control de Fumigación</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root{
+    --teal:#0F6E56; --teal-dark:#085041; --teal-light:#E1F5EE;
+    --amber:#BA7517; --red:#A32D2D; --green:#3B6D11;
+    --bg:#F7F7F5; --card:#FFFFFF; --border:#E1E0D9;
+    --text:#2C2C2A; --text-muted:#5F5E5A;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);}
+  header{background:var(--teal-dark);color:#fff;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10;}
+  header h1{font-size:16px;font-weight:600;}
+  header .user-info{font-size:12px;opacity:.85;text-align:right;}
+  #logout-btn{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;padding:4px 10px;border-radius:6px;font-size:12px;margin-left:8px;}
+  nav{display:flex;overflow-x:auto;background:var(--card);border-bottom:1px solid var(--border);}
+  nav button{flex:none;padding:12px 16px;background:none;border:none;font-size:13px;color:var(--text-muted);border-bottom:2px solid transparent;white-space:nowrap;}
+  nav button.active{color:var(--teal-dark);border-bottom-color:var(--teal);font-weight:600;}
+  main{padding:16px;max-width:900px;margin:0 auto;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;}
+  .card h2{font-size:15px;margin-bottom:12px;color:var(--teal-dark);}
+  label{display:block;font-size:12px;color:var(--text-muted);margin:10px 0 4px;}
+  input,select,textarea{width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:#fff;}
+  textarea{resize:vertical;min-height:60px;}
+  button.primary{margin-top:14px;width:100%;padding:11px;background:var(--teal);color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;}
+  button.secondary{margin-top:8px;width:100%;padding:10px;background:#fff;color:var(--teal-dark);border:1px solid var(--teal);border-radius:6px;font-size:13px;}
+  .msg{margin-top:10px;padding:8px 10px;border-radius:6px;font-size:13px;}
+  .msg.error{background:#FCEBEB;color:var(--red);}
+  .msg.ok{background:var(--teal-light);color:var(--teal-dark);}
+  .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px;}
+  .kpi{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;}
+  .kpi .label{font-size:11px;color:var(--text-muted);}
+  .kpi .value{font-size:22px;font-weight:600;margin-top:2px;}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+  .filters button{padding:7px 12px;border:1px solid var(--border);background:#fff;border-radius:20px;font-size:12px;}
+  .filters button.active{background:var(--teal);color:#fff;border-color:var(--teal);}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--border);}
+  .badge{padding:3px 8px;border-radius:20px;font-size:11px;font-weight:600;}
+  .badge.pendiente{background:#FAEEDA;color:var(--amber);}
+  .badge.realizado{background:var(--teal-light);color:var(--teal-dark);}
+  .badge.alta{background:#FCEBEB;color:var(--red);}
+  .hidden{display:none !important;}
+  .heat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;}
+  .heat-cell{border-radius:10px;padding:12px;}
+  .heat-cell .b{font-size:12px;}
+  .heat-cell .p{font-size:20px;font-weight:600;margin-top:2px;}
+  #login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;}
+  #login-card{max-width:340px;width:100%;}
+  .user-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;}
+  .user-row .role{font-size:11px;color:var(--text-muted);}
+  .inactive-row{opacity:.5;}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="card" id="login-card">
+    <h2>Control de Fumigación</h2>
+    <label>Código de acceso</label>
+    <input type="text" id="login-clave" placeholder="Ej. CC4821" maxlength="6" style="text-transform:uppercase;letter-spacing:1px;font-size:18px;text-align:center;" autocomplete="off">
+    <button class="primary" onclick="doLogin()">Entrar</button>
+    <div id="login-msg"></div>
+    <script>document.getElementById('login-clave').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });</script>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <h1>Control de Fumigación</h1>
+    <div class="user-info">
+      <span id="user-name"></span><br>
+      <span id="user-role"></span>
+      <button id="logout-btn" onclick="logout()">Salir</button>
+    </div>
+  </header>
+
+  <nav id="nav-tabs"></nav>
+
+  <main>
+    <!-- CAPTURAR REPORTE -->
+    <section id="tab-capturar" class="card hidden">
+      <h2>Reportar incidencia de insecto</h2>
+      <label>Área</label>
+      <select id="cap-area" onchange="toggleHabitacionField()"></select>
+      <div id="cap-hab-wrap">
+        <label>Habitación</label>
+        <input type="text" id="cap-habitacion" placeholder="Ej. 5203">
+      </div>
+      <label>Tipo de insecto</label>
+      <select id="cap-insecto"></select>
+      <label>Observaciones (opcional)</label>
+      <textarea id="cap-obs"></textarea>
+      <label>Foto (opcional)</label>
+      <input type="file" id="cap-foto" accept="image/*">
+      <button class="primary" onclick="enviarReporte()">Guardar reporte</button>
+      <div id="cap-msg"></div>
+    </section>
+
+    <!-- PREVENTIVO -->
+    <section id="tab-preventivo" class="card hidden">
+      <h2>Fumigación preventiva de habitación</h2>
+      <label>Número de habitación</label>
+      <input type="text" id="prev-habitacion" placeholder="Ej. 5203">
+      <button class="primary" onclick="registrarPreventivoUI()">Guardar</button>
+      <div id="prev-msg"></div>
+    </section>
+
+    <!-- REPORTES / CERRAR -->
+    <section id="tab-reportes" class="card hidden">
+      <h2>Reportes correctivos</h2>
+      <div id="reportes-lista"></div>
+    </section>
+
+    <!-- DASHBOARD -->
+    <section id="tab-dashboard" class="hidden">
+      <div class="filters" id="dash-filtros">
+        <button data-r="hoy" class="active">Hoy</button>
+        <button data-r="ayer">Ayer</button>
+        <button data-r="semana">Esta semana</button>
+        <button data-r="rango">Rango</button>
+      </div>
+      <div id="rango-fechas" class="hidden" style="display:flex;gap:8px;margin-bottom:14px;">
+        <input type="date" id="rango-desde">
+        <input type="date" id="rango-hasta">
+        <button class="secondary" onclick="cargarDashboard()">Aplicar</button>
+      </div>
+      <div class="kpi-grid" id="kpi-grid"></div>
+      <div class="card">
+        <h2>Reportes por tipo de insecto</h2>
+        <div style="position:relative;height:220px"><canvas id="chart-insecto"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Reportes por área</h2>
+        <div style="position:relative;height:220px"><canvas id="chart-area"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Cobertura preventiva por edificio (últimos 15 días)</h2>
+        <div class="heat-grid" id="heat-grid"></div>
+      </div>
+      <button class="secondary" onclick="exportarPDF()">Exportar PDF</button>
+      <button class="secondary" onclick="compartir()">Compartir</button>
+    </section>
+
+    <!-- USUARIOS -->
+    <section id="tab-usuarios" class="card hidden">
+      <h2>Usuarios</h2>
+      <div id="crear-usuario-wrap">
+        <label>Nombre</label>
+        <input type="text" id="us-nombre">
+        <label>Email</label>
+        <input type="email" id="us-email">
+        <label>Rol</label>
+        <select id="us-rol"></select>
+        <button class="primary" onclick="crearUsuarioUI()">Crear usuario</button>
+        <div id="us-msg"></div>
+      </div>
+      <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
+      <div id="lista-usuarios"></div>
+    </section>
+  </main>
+</div>
+
+<script>
+// ============ CONFIGURACION ============
+// Pegar aqui la URL del Web App despues de implementar el Code.gs
+const API_URL = 'https://script.google.com/macros/s/AKfycbykosmCSSYmWNEqRZE6_6vLDAIHZfW-2n6RW3M9e6kM0Az2jw2uyL05VWVYPqRTeOY7/exec';
+
+let SESSION = null;
+let CATALOGOS = { areas: [], insectos: [], habitaciones: [] };
+
+function callApi(accion, params) {
+  const body = new URLSearchParams({ accion, ...params });
+  return fetch(API_URL, { method: 'POST', body })
+    .then(r => r.json())
+    .then(res => {
+      if (!res.ok) throw new Error(res.error);
+      return res.data;
+    });
+}
+
+// ============ LOGIN ============
+function doLogin() {
+  const clave = document.getElementById('login-clave').value.trim();
+  callApi('login', { clave })
+    .then(user => {
+      SESSION = user;
+      localStorage.removeItem('dummy'); // no se usa localStorage para datos de sesion persistente por regla del sistema
+      iniciarApp();
+    })
+    .catch(err => {
+      document.getElementById('login-msg').innerHTML = '<div class="msg error">' + err.message + '</div>';
+    });
+}
+
+function logout() {
+  SESSION = null;
+  document.getElementById('app').classList.add('hidden');
+  document.getElementById('login-screen').classList.remove('hidden');
+}
+
+// ============ NAV POR ROL ============
+const TABS_POR_ROL = {
+  Master:            ['capturar','preventivo','reportes','dashboard','usuarios'],
+  CreadorProveedor:  ['capturar','preventivo','reportes','dashboard','usuarios'],
+  CreadorOperacion:  ['capturar','reportes','dashboard','usuarios'],
+  Fumigacion:        ['capturar','preventivo','reportes','dashboard'],
+  Operacion:         ['capturar','reportes','dashboard']
+};
+const LABELS = { capturar:'Reportar', preventivo:'Preventivo', reportes:'Reportes', dashboard:'Dashboard', usuarios:'Usuarios' };
+
+function iniciarApp() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('user-name').textContent = SESSION.nombre;
+  document.getElementById('user-role').textContent = SESSION.rol;
+
+  const tabs = TABS_POR_ROL[SESSION.rol] || ['capturar'];
+  const nav = document.getElementById('nav-tabs');
+  nav.innerHTML = '';
+  tabs.forEach((t, i) => {
+    const btn = document.createElement('button');
+    btn.textContent = LABELS[t];
+    btn.onclick = () => mostrarTab(t, btn);
+    if (i === 0) btn.classList.add('active');
+    nav.appendChild(btn);
+  });
+
+  callApi('catalogos', {}).then(cat => {
+    CATALOGOS = cat;
+    poblarSelects();
+  });
+
+  mostrarTab(tabs[0], nav.querySelector('button'));
+}
+
+function mostrarTab(tab, btnEl) {
+  document.querySelectorAll('#nav-tabs button').forEach(b => b.classList.remove('active'));
+  if (btnEl) btnEl.classList.add('active');
+  ['capturar','preventivo','reportes','dashboard','usuarios'].forEach(t => {
+    document.getElementById('tab-' + t).classList.add('hidden');
+  });
+  document.getElementById('tab-' + tab).classList.remove('hidden');
+  if (tab === 'reportes') cargarReportes();
+  if (tab === 'dashboard') cargarDashboard();
+  if (tab === 'usuarios') cargarUsuarios();
+}
+
+function poblarSelects() {
+  const areaSel = document.getElementById('cap-area');
+  areaSel.innerHTML = CATALOGOS.areas.map(a => `<option value="${a}">${a}</option>`).join('');
+  const insectoSel = document.getElementById('cap-insecto');
+  insectoSel.innerHTML = CATALOGOS.insectos.map(i => `<option value="${i}">${i}</option>`).join('');
+  toggleHabitacionField();
+
+  const rolSel = document.getElementById('us-rol');
+  const rolesPermitidos = {
+    Master: ['Master','CreadorProveedor','CreadorOperacion','Fumigacion','Operacion'],
+    CreadorProveedor: ['Fumigacion'],
+    CreadorOperacion: ['Operacion']
+  }[SESSION.rol] || [];
+  if (rolSel) rolSel.innerHTML = rolesPermitidos.map(r => `<option value="${r}">${r}</option>`).join('');
+}
+
+function toggleHabitacionField() {
+  const area = document.getElementById('cap-area').value;
+  document.getElementById('cap-hab-wrap').classList.toggle('hidden', area !== 'Habitacion');
+}
+
+// ============ CAPTURAR REPORTE ============
+function fotoABase64(inputId) {
+  return new Promise(resolve => {
+    const file = document.getElementById(inputId).files[0];
+    if (!file) return resolve('');
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(file);
+  });
+}
+
+function enviarReporte() {
+  const area = document.getElementById('cap-area').value;
+  const habitacion = document.getElementById('cap-habitacion').value.trim();
+  const tipoInsecto = document.getElementById('cap-insecto').value;
+  const observaciones = document.getElementById('cap-obs').value.trim();
+
+  fotoABase64('cap-foto').then(foto => {
+    const data = { hotel: 'DRRPC', area, habitacion, tipoInsecto, usuarioReporta: SESSION.email, fotoInicial: foto, observaciones };
+    callApi('crearReporte', { data: JSON.stringify(data) })
+      .then(res => {
+        document.getElementById('cap-msg').innerHTML =
+          '<div class="msg ok">Reporte guardado. Este es el reporte número ' + res.conteoAcumulado + ' para esta habitación.</div>';
+        document.getElementById('cap-obs').value = '';
+        document.getElementById('cap-foto').value = '';
+      })
+      .catch(err => {
+        document.getElementById('cap-msg').innerHTML = '<div class="msg error">' + err.message + '</div>';
+      });
+  });
+}
+
+// ============ PREVENTIVO ============
+function registrarPreventivoUI() {
+  const habitacion = document.getElementById('prev-habitacion').value.trim();
+  callApi('registrarPreventivo', { emailActor: SESSION.email, habitacion })
+    .then(res => {
+      document.getElementById('prev-msg').innerHTML = '<div class="msg ok">Fumigación preventiva registrada en ' + res.edificio + '.</div>';
+      document.getElementById('prev-habitacion').value = '';
+    })
+    .catch(err => {
+      document.getElementById('prev-msg').innerHTML = '<div class="msg error">' + err.message + '</div>';
+    });
+}
+
+// ============ REPORTES / CERRAR ============
+const PUEDE_CERRAR = ['Master','CreadorProveedor','Fumigacion'];
+
+function cargarReportes() {
+  callApi('obtenerReportes', { filtros: JSON.stringify({ hotel: 'DRRPC' }) }).then(reportes => {
+    const cont = document.getElementById('reportes-lista');
+    if (!reportes.length) { cont.innerHTML = '<p>Sin reportes registrados.</p>'; return; }
+    cont.innerHTML = reportes.slice().reverse().map(r => `
+      <div class="card" style="margin-bottom:8px;padding:12px;">
+        <div style="display:flex;justify-content:space-between;">
+          <strong>${r.area}${r.habitacion ? ' · Hab. ' + r.habitacion : ''}</strong>
+          <span class="badge ${r.estado === 'Pendiente' ? 'pendiente' : 'realizado'}">${r.estado}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+          ${r.tipoInsecto} · ${new Date(r.fechaHora).toLocaleString('es-DO')}
+          ${r.severidad === 'Alta' ? ' · <span class="badge alta">Alta severidad</span>' : ''}
+        </div>
+        ${r.observaciones ? '<div style="font-size:13px;margin-top:6px;">' + r.observaciones + '</div>' : ''}
+        ${r.estado === 'Pendiente' && PUEDE_CERRAR.indexOf(SESSION.rol) !== -1 ? `
+          <div style="margin-top:10px;">
+            <label>Comentario de cierre</label>
+            <textarea id="cierre-com-${r.id}"></textarea>
+            <label>Foto de evidencia</label>
+            <input type="file" id="cierre-foto-${r.id}" accept="image/*">
+            <button class="secondary" onclick="cerrarReporteUI('${r.id}')">Cerrar reporte</button>
+          </div>` : ''}
+      </div>
+    `).join('');
+  });
+}
+
+function cerrarReporteUI(id) {
+  const comentario = document.getElementById('cierre-com-' + id).value.trim();
+  const fotoInput = document.getElementById('cierre-foto-' + id);
+  const reader = new FileReader();
+  const file = fotoInput.files[0];
+  if (!file) { alert('La foto de evidencia es obligatoria.'); return; }
+  reader.onload = () => {
+    callApi('cerrarReporte', { emailActor: SESSION.email, id, fotoEvidencia: reader.result, comentario })
+      .then(() => cargarReportes())
+      .catch(err => alert(err.message));
+  };
+  reader.readAsDataURL(file);
+}
+
+// ============ DASHBOARD ============
+let chartInsecto, chartArea;
+
+document.addEventListener('click', e => {
+  if (e.target.matches('#dash-filtros button')) {
+    document.querySelectorAll('#dash-filtros button').forEach(b => b.classList.remove('active'));
+    e.target.classList.add('active');
+    document.getElementById('rango-fechas').classList.toggle('hidden', e.target.dataset.r !== 'rango');
+    if (e.target.dataset.r !== 'rango') cargarDashboard();
+  }
+});
+
+function rangoFechasActual() {
+  const activo = document.querySelector('#dash-filtros button.active');
+  const tipo = activo ? activo.dataset.r : 'hoy';
+  const hoy = new Date();
+  let desde, hasta;
+  if (tipo === 'hoy') {
+    desde = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+    hasta = new Date();
+  } else if (tipo === 'ayer') {
+    desde = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - 1);
+    hasta = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  } else if (tipo === 'semana') {
+    const dia = hoy.getDay() === 0 ? 7 : hoy.getDay(); // lunes=1..domingo=7
+    desde = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - (dia - 1));
+    hasta = new Date();
+  } else {
+    desde = new Date(document.getElementById('rango-desde').value || hoy);
+    hasta = new Date(document.getElementById('rango-hasta').value || hoy);
+  }
+  return { desde, hasta };
+}
+
+function cargarDashboard() {
+  const { desde, hasta } = rangoFechasActual();
+  callApi('obtenerReportes', { filtros: JSON.stringify({ desde, hasta, hotel: 'DRRPC' }) }).then(reportes => {
+    pintarKPIs(reportes);
+    pintarCharts(reportes);
+  });
+  callApi('coberturaPreventiva', {}).then(pintarHeatmap);
+}
+
+function pintarKPIs(reportes) {
+  const total = reportes.length;
+  const pendientes = reportes.filter(r => r.estado === 'Pendiente').length;
+  const realizados = reportes.filter(r => r.estado === 'Realizado').length;
+  const alta = reportes.filter(r => r.severidad === 'Alta').length;
+  document.getElementById('kpi-grid').innerHTML = `
+    <div class="kpi"><div class="label">Total reportes</div><div class="value">${total}</div></div>
+    <div class="kpi"><div class="label">Pendientes</div><div class="value">${pendientes}</div></div>
+    <div class="kpi"><div class="label">Realizados</div><div class="value">${realizados}</div></div>
+    <div class="kpi"><div class="label">Alta severidad</div><div class="value">${alta}</div></div>
+  `;
+}
+
+function contarPor(reportes, campo) {
+  const conteo = {};
+  reportes.forEach(r => { conteo[r[campo]] = (conteo[r[campo]] || 0) + 1; });
+  return conteo;
+}
+
+function pintarCharts(reportes) {
+  const porInsecto = contarPor(reportes, 'tipoInsecto');
+  const porArea = contarPor(reportes, 'area');
+
+  if (chartInsecto) chartInsecto.destroy();
+  chartInsecto = new Chart(document.getElementById('chart-insecto'), {
+    type: 'bar',
+    data: { labels: Object.keys(porInsecto), datasets: [{ label: 'Reportes', data: Object.values(porInsecto), backgroundColor: '#1D9E75' }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+  });
+
+  if (chartArea) chartArea.destroy();
+  chartArea = new Chart(document.getElementById('chart-area'), {
+    type: 'doughnut',
+    data: { labels: Object.keys(porArea), datasets: [{ data: Object.values(porArea), backgroundColor: ['#0F6E56','#BA7517','#A32D2D','#378ADD','#7F77DD','#D85A30'] } ] },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+}
+
+function pintarHeatmap(cobertura) {
+  const cont = document.getElementById('heat-grid');
+  cont.innerHTML = cobertura.map(c => {
+    const p = c.porcentaje;
+    const bg = p >= 80 ? '#B5D4F4' : p >= 60 ? '#85B7EB' : p >= 40 ? '#B5D4F4' : '#E6F1FB';
+    const fg = p >= 60 ? '#0C447C' : '#185FA5';
+    return `<div class="heat-cell" style="background:${bg};color:${fg};">
+      <div class="b">${c.edificio}</div><div class="p">${p}%</div>
+    </div>`;
+  }).join('');
+}
+
+function exportarPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFontSize(14);
+  doc.text('Reporte de Control de Fumigación', 14, 16);
+  doc.setFontSize(10);
+  doc.text('Generado: ' + new Date().toLocaleString('es-DO'), 14, 24);
+  doc.text(document.getElementById('kpi-grid').innerText.replace(/\\n+/g, ' | '), 14, 34);
+  doc.save('reporte_fumigacion_drrpc.pdf');
+}
+
+function compartir() {
+  if (navigator.share) {
+    navigator.share({ title: 'Control de Fumigación', url: window.location.href });
+  } else {
+    navigator.clipboard.writeText(window.location.href);
+    alert('Link copiado al portapapeles.');
+  }
+}
+
+// ============ USUARIOS ============
+function cargarUsuarios() {
+  callApi('listarUsuarios', { emailActor: SESSION.email }).then(usuarios => {
+    document.getElementById('lista-usuarios').innerHTML = usuarios.map(u => `
+      <div class="user-row ${u.estado === 'Inactivo' ? 'inactive-row' : ''}">
+        <div>${u.nombre}<div class="role">${u.email} · ${u.rol}</div></div>
+        <div>
+          <span class="badge ${u.estado === 'Activo' ? 'realizado' : 'pendiente'}">${u.estado}</span>
+          ${u.estado === 'Activo' ? `<button class="secondary" style="width:auto;padding:4px 10px;margin-left:6px;" onclick="inactivarUsuarioUI('${u.email}')">Inactivar</button>` : ''}
+        </div>
+      </div>
+    `).join('');
+  });
+}
+
+function crearUsuarioUI() {
+  const nombre = document.getElementById('us-nombre').value.trim();
+  const email = document.getElementById('us-email').value.trim();
+  const rol = document.getElementById('us-rol').value;
+  callApi('crearUsuario', { emailActor: SESSION.email, email, nombre, rol })
+    .then(res => {
+      document.getElementById('us-msg').innerHTML =
+        '<div class="msg ok">Usuario creado. Clave asignada: <strong>' + res.clave + '</strong></div>';
+      document.getElementById('us-nombre').value = '';
+      document.getElementById('us-email').value = '';
+      cargarUsuarios();
+    })
+    .catch(err => {
+      document.getElementById('us-msg').innerHTML = '<div class="msg error">' + err.message + '</div>';
+    });
+}
+
+function inactivarUsuarioUI(email) {
+  if (!confirm('¿Inactivar a ' + email + '? El histórico se conserva, solo pierde acceso.')) return;
+  callApi('inactivarUsuario', { emailActor: SESSION.email, emailObjetivo: email }).then(cargarUsuarios);
+}
+</script>
+</body>
+</html>
