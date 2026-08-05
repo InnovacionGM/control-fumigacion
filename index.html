@@ -182,6 +182,10 @@ function callApi(accion, params) {
     .then(res => {
       if (!res.ok) throw new Error(res.error);
       return res.data;
+    })
+    .catch(err => {
+      if (err instanceof TypeError) throw new Error('No se pudo conectar. Revisa tu conexión (wifi o datos) e intenta de nuevo.');
+      throw err;
     });
 }
 
@@ -274,14 +278,35 @@ function toggleHabitacionField() {
 }
 
 // ============ CAPTURAR REPORTE ============
-function fotoABase64(inputId) {
-  return new Promise(resolve => {
-    const file = document.getElementById(inputId).files[0];
+function comprimirImagen(file) {
+  return new Promise((resolve, reject) => {
     if (!file) return resolve('');
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1000;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) { height = Math.round(height * (maxDim / width)); width = maxDim; }
+          else { width = Math.round(width * (maxDim / height)); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.65));
+      };
+      img.onerror = () => reject(new Error('No se pudo procesar la imagen.'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('No se pudo leer la imagen.'));
     reader.readAsDataURL(file);
   });
+}
+
+function fotoABase64(inputId) {
+  const file = document.getElementById(inputId).files[0];
+  return comprimirImagen(file);
 }
 
 function enviarReporte() {
@@ -336,6 +361,13 @@ function cargarReportes() {
           ${r.severidad === 'Alta' ? ' · <span class="badge alta">Alta severidad</span>' : ''}
         </div>
         ${r.observaciones ? '<div style="font-size:13px;margin-top:6px;">' + r.observaciones + '</div>' : ''}
+        ${r.fotoInicial ? '<img src="' + r.fotoInicial + '" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;">' : ''}
+        ${r.estado === 'Realizado' ? `
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+            <div style="font-size:12px;color:var(--text-muted);">Evidencia de cierre · ${r.usuarioCierre}</div>
+            ${r.fotoEvidencia ? '<img src="' + r.fotoEvidencia + '" style="max-width:100%;border-radius:8px;margin-top:6px;display:block;">' : ''}
+            <div style="font-size:13px;margin-top:6px;">${r.comentarioCierre}</div>
+          </div>` : ''}
         ${r.estado === 'Pendiente' && PUEDE_CERRAR.indexOf(SESSION.rol) !== -1 ? `
           <div style="margin-top:10px;">
             <label>Comentario de cierre</label>
@@ -352,15 +384,13 @@ function cargarReportes() {
 function cerrarReporteUI(id) {
   const comentario = document.getElementById('cierre-com-' + id).value.trim();
   const fotoInput = document.getElementById('cierre-foto-' + id);
-  const reader = new FileReader();
   const file = fotoInput.files[0];
   if (!file) { alert('La foto de evidencia es obligatoria.'); return; }
-  reader.onload = () => {
-    callApi('cerrarReporte', { emailActor: SESSION.email, id, fotoEvidencia: reader.result, comentario })
-      .then(() => cargarReportes())
-      .catch(err => alert(err.message));
-  };
-  reader.readAsDataURL(file);
+  if (!comentario) { alert('El comentario de cierre es obligatorio.'); return; }
+  comprimirImagen(file)
+    .then(fotoEvidencia => callApi('cerrarReporte', { emailActor: SESSION.email, id, fotoEvidencia, comentario }))
+    .then(() => cargarReportes())
+    .catch(err => alert(err.message));
 }
 
 // ============ DASHBOARD ============
