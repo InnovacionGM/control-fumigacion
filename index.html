@@ -64,7 +64,7 @@
   <div class="card" id="login-card">
     <h2>Control de Fumigación</h2>
     <label>Código de acceso</label>
-    <input type="text" id="login-clave" placeholder="Ej. CC4821" maxlength="6" style="text-transform:uppercase;letter-spacing:1px;font-size:18px;text-align:center;" autocomplete="off">
+    <input type="text" id="login-clave" placeholder="Ej. CC4821" maxlength="10" style="text-transform:uppercase;letter-spacing:1px;font-size:18px;text-align:center;" autocomplete="off">
     <button class="primary" onclick="doLogin()">Entrar</button>
     <div id="login-msg"></div>
     <script>document.getElementById('login-clave').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });</script>
