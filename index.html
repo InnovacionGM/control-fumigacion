@@ -56,6 +56,10 @@
   .user-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;}
   .user-row .role{font-size:11px;color:var(--text-muted);}
   .inactive-row{opacity:.5;}
+  #refresh-btn{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;padding:4px 9px;border-radius:6px;font-size:14px;margin-left:8px;line-height:1;}
+  #loading-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:999;color:#fff;font-size:14px;}
+  #loading-spinner{width:34px;height:34px;border:3px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:girar .7s linear infinite;}
+  @keyframes girar{to{transform:rotate(360deg);}}
 </style>
 </head>
 <body>
@@ -77,9 +81,15 @@
     <div class="user-info">
       <span id="user-name"></span><br>
       <span id="user-role"></span>
+      <button id="refresh-btn" onclick="actualizarVistaActual()" title="Actualizar" aria-label="Actualizar">⟳</button>
       <button id="logout-btn" onclick="logout()">Salir</button>
     </div>
   </header>
+
+  <div id="loading-overlay" class="hidden">
+    <div id="loading-spinner"></div>
+    <span>Un momento...</span>
+  </div>
 
   <nav id="nav-tabs"></nav>
 
@@ -110,12 +120,22 @@
       <input type="text" id="prev-habitacion" placeholder="Ej. 5203">
       <button class="primary" onclick="registrarPreventivoUI()">Guardar</button>
       <div id="prev-msg"></div>
+      <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
+      <h2>Registros recientes</h2>
+      <div id="prev-lista"></div>
     </section>
 
     <!-- REPORTES / CERRAR -->
     <section id="tab-reportes" class="card hidden">
       <h2>Reportes correctivos</h2>
-      <div id="reportes-lista"></div>
+      <div class="filters" id="reportes-filtros">
+        <button data-f="todos" class="active">Todos</button>
+        <button data-f="pendiente">Pendientes</button>
+        <button data-f="realizado">Realizados</button>
+        <button data-f="alta">Alta severidad</button>
+      </div>
+      <button class="secondary" onclick="exportarPDFSeleccionados()">Exportar PDF de seleccionados</button>
+      <div id="reportes-lista" style="margin-top:10px;"></div>
     </section>
 
     <!-- DASHBOARD -->
@@ -175,18 +195,29 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbykosmCSSYmWNEqRZE6_6vL
 let SESSION = null;
 let CATALOGOS = { areas: [], insectos: [], habitaciones: [] };
 
+let solicitudesActivas = 0;
+function mostrarCargando(mostrar) {
+  solicitudesActivas = Math.max(0, solicitudesActivas + (mostrar ? 1 : -1));
+  document.getElementById('loading-overlay').classList.toggle('hidden', solicitudesActivas <= 0);
+}
+
 function callApi(accion, params) {
   const body = new URLSearchParams({ accion, ...params });
-  return fetch(API_URL, { method: 'POST', body })
+  const controlador = new AbortController();
+  const timeoutId = setTimeout(() => controlador.abort(), 20000);
+  mostrarCargando(true);
+  return fetch(API_URL, { method: 'POST', body, signal: controlador.signal })
     .then(r => r.json())
     .then(res => {
       if (!res.ok) throw new Error(res.error);
       return res.data;
     })
     .catch(err => {
+      if (err.name === 'AbortError') throw new Error('El sistema no respondió a tiempo. Revisa tu conexión e intenta de nuevo.');
       if (err instanceof TypeError) throw new Error('No se pudo conectar. Revisa tu conexión (wifi o datos) e intenta de nuevo.');
       throw err;
-    });
+    })
+    .finally(() => { clearTimeout(timeoutId); mostrarCargando(false); });
 }
 
 // ============ LOGIN ============
@@ -244,7 +275,10 @@ function iniciarApp() {
   mostrarTab(tabs[0], nav.querySelector('button'));
 }
 
+let TAB_ACTUAL = 'capturar';
+
 function mostrarTab(tab, btnEl) {
+  TAB_ACTUAL = tab;
   document.querySelectorAll('#nav-tabs button').forEach(b => b.classList.remove('active'));
   if (btnEl) btnEl.classList.add('active');
   ['capturar','preventivo','reportes','dashboard','usuarios'].forEach(t => {
@@ -252,8 +286,17 @@ function mostrarTab(tab, btnEl) {
   });
   document.getElementById('tab-' + tab).classList.remove('hidden');
   if (tab === 'reportes') cargarReportes();
+  if (tab === 'preventivo') cargarPreventivo();
   if (tab === 'dashboard') cargarDashboard();
   if (tab === 'usuarios') cargarUsuarios();
+}
+
+function actualizarVistaActual() {
+  if (TAB_ACTUAL === 'reportes') cargarReportes();
+  else if (TAB_ACTUAL === 'preventivo') cargarPreventivo();
+  else if (TAB_ACTUAL === 'dashboard') cargarDashboard();
+  else if (TAB_ACTUAL === 'usuarios') cargarUsuarios();
+  else callApi('catalogos', {}).then(cat => { CATALOGOS = cat; poblarSelects(); });
 }
 
 function poblarSelects() {
@@ -274,7 +317,9 @@ function poblarSelects() {
 
 function toggleHabitacionField() {
   const area = document.getElementById('cap-area').value;
-  document.getElementById('cap-hab-wrap').classList.toggle('hidden', area !== 'Habitacion');
+  const esHabitacion = area === 'Habitacion';
+  document.getElementById('cap-hab-wrap').classList.toggle('hidden', !esHabitacion);
+  if (!esHabitacion) document.getElementById('cap-habitacion').value = ''; // nunca dejar un numero pegado de un area anterior
 }
 
 // ============ CAPTURAR REPORTE ============
@@ -311,7 +356,7 @@ function fotoABase64(inputId) {
 
 function enviarReporte() {
   const area = document.getElementById('cap-area').value;
-  const habitacion = document.getElementById('cap-habitacion').value.trim();
+  const habitacion = area === 'Habitacion' ? document.getElementById('cap-habitacion').value.trim() : '';
   const tipoInsecto = document.getElementById('cap-insecto').value;
   const observaciones = document.getElementById('cap-obs').value.trim();
 
@@ -321,8 +366,12 @@ function enviarReporte() {
       .then(res => {
         document.getElementById('cap-msg').innerHTML =
           '<div class="msg ok">Reporte guardado. Este es el reporte número ' + res.conteoAcumulado + ' para esta habitación.</div>';
+        document.getElementById('cap-area').selectedIndex = 0;
+        document.getElementById('cap-habitacion').value = '';
+        document.getElementById('cap-insecto').selectedIndex = 0;
         document.getElementById('cap-obs').value = '';
         document.getElementById('cap-foto').value = '';
+        toggleHabitacionField();
       })
       .catch(err => {
         document.getElementById('cap-msg').innerHTML = '<div class="msg error">' + err.message + '</div>';
@@ -337,48 +386,105 @@ function registrarPreventivoUI() {
     .then(res => {
       document.getElementById('prev-msg').innerHTML = '<div class="msg ok">Fumigación preventiva registrada en ' + res.edificio + '.</div>';
       document.getElementById('prev-habitacion').value = '';
+      cargarPreventivo();
     })
     .catch(err => {
       document.getElementById('prev-msg').innerHTML = '<div class="msg error">' + err.message + '</div>';
     });
 }
 
-// ============ REPORTES / CERRAR ============
-const PUEDE_CERRAR = ['Master','CreadorProveedor','Fumigacion'];
-
-function cargarReportes() {
-  callApi('obtenerReportes', { filtros: JSON.stringify({ hotel: 'DRRPC' }) }).then(reportes => {
-    const cont = document.getElementById('reportes-lista');
-    if (!reportes.length) { cont.innerHTML = '<p>Sin reportes registrados.</p>'; return; }
-    cont.innerHTML = reportes.slice().reverse().map(r => `
-      <div class="card" style="margin-bottom:8px;padding:12px;">
-        <div style="display:flex;justify-content:space-between;">
-          <strong>${r.area}${r.habitacion ? ' · Hab. ' + r.habitacion : ''}</strong>
-          <span class="badge ${r.estado === 'Pendiente' ? 'pendiente' : 'realizado'}">${r.estado}</span>
-        </div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
-          ${r.tipoInsecto} · ${new Date(r.fechaHora).toLocaleString('es-DO')}
-          ${r.severidad === 'Alta' ? ' · <span class="badge alta">Alta severidad</span>' : ''}
-        </div>
-        ${r.observaciones ? '<div style="font-size:13px;margin-top:6px;">' + r.observaciones + '</div>' : ''}
-        ${r.fotoInicial ? '<img src="' + r.fotoInicial + '" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;">' : ''}
-        ${r.estado === 'Realizado' ? `
-          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
-            <div style="font-size:12px;color:var(--text-muted);">Evidencia de cierre · ${r.usuarioCierre}</div>
-            ${r.fotoEvidencia ? '<img src="' + r.fotoEvidencia + '" style="max-width:100%;border-radius:8px;margin-top:6px;display:block;">' : ''}
-            <div style="font-size:13px;margin-top:6px;">${r.comentarioCierre}</div>
-          </div>` : ''}
-        ${r.estado === 'Pendiente' && PUEDE_CERRAR.indexOf(SESSION.rol) !== -1 ? `
-          <div style="margin-top:10px;">
-            <label>Comentario de cierre</label>
-            <textarea id="cierre-com-${r.id}"></textarea>
-            <label>Foto de evidencia</label>
-            <input type="file" id="cierre-foto-${r.id}" accept="image/*">
-            <button class="secondary" onclick="cerrarReporteUI('${r.id}')">Cerrar reporte</button>
-          </div>` : ''}
+function cargarPreventivo() {
+  callApi('obtenerPreventivo', { filtros: JSON.stringify({ hotel: 'DRRPC' }) }).then(registros => {
+    const cont = document.getElementById('prev-lista');
+    if (!registros.length) { cont.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Sin registros todavía.</p>'; return; }
+    cont.innerHTML = registros.slice(0, 30).map(r => `
+      <div class="user-row">
+        <div>Hab. ${r.habitacion} · ${r.edificio}<div class="role">${new Date(r.fechaHora).toLocaleString('es-DO')} · ${r.usuarioCaptura}</div></div>
+        ${SESSION.rol === 'Master' ? `<button class="secondary" style="width:auto;padding:4px 10px;" onclick="borrarPreventivoUI('${r.id}')">Borrar</button>` : ''}
       </div>
     `).join('');
   });
+}
+
+function borrarPreventivoUI(id) {
+  if (!confirm('¿Borrar este registro preventivo? Esta acción no se puede deshacer (a diferencia de inactivar usuarios, aquí sí se borra de verdad — úsalo solo para datos de prueba).')) return;
+  callApi('borrarPreventivo', { emailActor: SESSION.email, id }).then(cargarPreventivo).catch(err => alert(err.message));
+}
+
+// ============ REPORTES / CERRAR ============
+const PUEDE_CERRAR = ['Master','CreadorProveedor','Fumigacion'];
+let REPORTES_CACHE = [];
+let FILTRO_REPORTES = 'todos';
+
+document.addEventListener('click', e => {
+  if (e.target.matches('#reportes-filtros button')) {
+    document.querySelectorAll('#reportes-filtros button').forEach(b => b.classList.remove('active'));
+    e.target.classList.add('active');
+    FILTRO_REPORTES = e.target.dataset.f;
+    pintarReportes();
+  }
+});
+
+function irAReportesConFiltro(filtro) {
+  FILTRO_REPORTES = filtro;
+  const nav = document.getElementById('nav-tabs');
+  const btn = Array.from(nav.querySelectorAll('button')).find(b => b.textContent === 'Reportes');
+  mostrarTab('reportes', btn);
+}
+
+function cargarReportes() {
+  callApi('obtenerReportes', { filtros: JSON.stringify({ hotel: 'DRRPC' }) }).then(reportes => {
+    REPORTES_CACHE = reportes.slice().reverse();
+    document.querySelectorAll('#reportes-filtros button').forEach(b => b.classList.toggle('active', b.dataset.f === FILTRO_REPORTES));
+    pintarReportes();
+  });
+}
+
+function pintarReportes() {
+  const cont = document.getElementById('reportes-lista');
+  let lista = REPORTES_CACHE;
+  if (FILTRO_REPORTES === 'pendiente') lista = lista.filter(r => r.estado === 'Pendiente');
+  else if (FILTRO_REPORTES === 'realizado') lista = lista.filter(r => r.estado === 'Realizado');
+  else if (FILTRO_REPORTES === 'alta') lista = lista.filter(r => r.severidad === 'Alta');
+
+  if (!lista.length) { cont.innerHTML = '<p>Sin reportes en este filtro.</p>'; return; }
+  cont.innerHTML = lista.map(r => `
+    <div class="card" style="margin-bottom:8px;padding:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+        <label style="display:flex;gap:8px;align-items:flex-start;flex:1;">
+          <input type="checkbox" class="chk-reporte" value="${r.id}" style="margin-top:4px;">
+          <strong>${r.area}${r.habitacion ? ' · Hab. ' + r.habitacion : ''}</strong>
+        </label>
+        <span class="badge ${r.estado === 'Pendiente' ? 'pendiente' : 'realizado'}">${r.estado}</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+        ${r.tipoInsecto} · ${new Date(r.fechaHora).toLocaleString('es-DO')}
+        ${r.severidad === 'Alta' ? ' · <span class="badge alta">Alta severidad</span>' : ''}
+      </div>
+      ${r.observaciones ? '<div style="font-size:13px;margin-top:6px;">' + r.observaciones + '</div>' : ''}
+      ${r.fotoInicial ? '<img src="' + r.fotoInicial + '" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;">' : ''}
+      ${r.estado === 'Realizado' ? `
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+          <div style="font-size:12px;color:var(--text-muted);">Evidencia de cierre · ${r.usuarioCierre}</div>
+          ${r.fotoEvidencia ? '<img src="' + r.fotoEvidencia + '" style="max-width:100%;border-radius:8px;margin-top:6px;display:block;">' : ''}
+          <div style="font-size:13px;margin-top:6px;">${r.comentarioCierre}</div>
+        </div>` : ''}
+      ${r.estado === 'Pendiente' && PUEDE_CERRAR.indexOf(SESSION.rol) !== -1 ? `
+        <div style="margin-top:10px;">
+          <label>Comentario de cierre</label>
+          <textarea id="cierre-com-${r.id}"></textarea>
+          <label>Foto de evidencia</label>
+          <input type="file" id="cierre-foto-${r.id}" accept="image/*">
+          <button class="secondary" onclick="cerrarReporteUI('${r.id}')">Cerrar reporte</button>
+        </div>` : ''}
+      ${SESSION.rol === 'Master' ? `<button class="secondary" style="width:auto;padding:4px 10px;margin-top:8px;color:var(--red);border-color:var(--red);" onclick="borrarReporteUI('${r.id}')">Borrar (dato de prueba)</button>` : ''}
+    </div>
+  `).join('');
+}
+
+function borrarReporteUI(id) {
+  if (!confirm('¿Borrar este reporte definitivamente? Úsalo solo para datos de prueba, no hay forma de deshacerlo.')) return;
+  callApi('borrarReporte', { emailActor: SESSION.email, id }).then(cargarReportes).catch(err => alert(err.message));
 }
 
 function cerrarReporteUI(id) {
@@ -442,10 +548,10 @@ function pintarKPIs(reportes) {
   const realizados = reportes.filter(r => r.estado === 'Realizado').length;
   const alta = reportes.filter(r => r.severidad === 'Alta').length;
   document.getElementById('kpi-grid').innerHTML = `
-    <div class="kpi"><div class="label">Total reportes</div><div class="value">${total}</div></div>
-    <div class="kpi"><div class="label">Pendientes</div><div class="value">${pendientes}</div></div>
-    <div class="kpi"><div class="label">Realizados</div><div class="value">${realizados}</div></div>
-    <div class="kpi"><div class="label">Alta severidad</div><div class="value">${alta}</div></div>
+    <div class="kpi" style="cursor:pointer;" onclick="irAReportesConFiltro('todos')"><div class="label">Total reportes</div><div class="value">${total}</div></div>
+    <div class="kpi" style="cursor:pointer;" onclick="irAReportesConFiltro('pendiente')"><div class="label">Pendientes</div><div class="value">${pendientes}</div></div>
+    <div class="kpi" style="cursor:pointer;" onclick="irAReportesConFiltro('realizado')"><div class="label">Realizados</div><div class="value">${realizados}</div></div>
+    <div class="kpi" style="cursor:pointer;" onclick="irAReportesConFiltro('alta')"><div class="label">Alta severidad</div><div class="value">${alta}</div></div>
   `;
 }
 
@@ -486,15 +592,91 @@ function pintarHeatmap(cobertura) {
   }).join('');
 }
 
-function exportarPDF() {
+function exportarPDFSeleccionados() {
+  const ids = Array.from(document.querySelectorAll('.chk-reporte:checked')).map(c => c.value);
+  if (!ids.length) { alert('Selecciona al menos un reporte con el checkbox.'); return; }
+  const seleccionados = REPORTES_CACHE.filter(r => ids.indexOf(r.id) !== -1);
+
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
+  const doc = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'portrait' }); // carta vertical
+  const anchoUtil = 540; // 612pt carta - márgenes
+  const margenX = 36;
+  let y = 40;
+  const compacto = seleccionados.length > 1;
+  const alturaImg = compacto ? 110 : 220;
+
   doc.setFontSize(14);
-  doc.text('Reporte de Control de Fumigación', 14, 16);
-  doc.setFontSize(10);
-  doc.text('Generado: ' + new Date().toLocaleString('es-DO'), 14, 24);
-  doc.text(document.getElementById('kpi-grid').innerText.replace(/\\n+/g, ' | '), 14, 34);
-  doc.save('reporte_fumigacion_drrpc.pdf');
+  doc.text('Reporte de Control de Fumigación', margenX, y); y += 18;
+  doc.setFontSize(9);
+  doc.text('Generado: ' + new Date().toLocaleString('es-DO'), margenX, y); y += 20;
+
+  seleccionados.forEach((r, idx) => {
+    if (y > 700) { doc.addPage(); y = 40; }
+    doc.setFontSize(11);
+    doc.text((r.area === 'Habitacion' ? 'Habitación ' + r.habitacion : r.area) + ' · ' + r.tipoInsecto, margenX, y); y += 14;
+    doc.setFontSize(9);
+    doc.text('Estado: ' + r.estado + ' · ' + new Date(r.fechaHora).toLocaleString('es-DO') + (r.severidad === 'Alta' ? ' · Alta severidad' : ''), margenX, y); y += 12;
+    if (r.observaciones) { doc.text('Obs: ' + r.observaciones, margenX, y, { maxWidth: anchoUtil }); y += 12; }
+    if (r.fotoInicial) {
+      try { doc.addImage(r.fotoInicial, 'JPEG', margenX, y, alturaImg * 1.3, alturaImg); y += alturaImg + 8; } catch (e) {}
+    }
+    if (r.estado === 'Realizado') {
+      doc.text('Cierre por: ' + r.usuarioCierre + ' — ' + (r.comentarioCierre || ''), margenX, y, { maxWidth: anchoUtil }); y += 12;
+      if (r.fotoEvidencia) {
+        try { doc.addImage(r.fotoEvidencia, 'JPEG', margenX, y, alturaImg * 1.3, alturaImg); y += alturaImg + 8; } catch (e) {}
+      }
+    }
+    y += 10;
+    if (idx < seleccionados.length - 1) { doc.setDrawColor(220); doc.line(margenX, y - 5, margenX + anchoUtil, y - 5); }
+  });
+
+  doc.save('reportes_fumigacion_' + Date.now() + '.pdf');
+}
+
+function exportarPDF() {
+  const { desde, hasta } = rangoFechasActual();
+  callApi('resumenDetallado', { desde: desde.toISOString(), hasta: hasta.toISOString(), hotel: 'DRRPC' }).then(r => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'portrait' });
+    const margenX = 36;
+    const anchoUtil = 540;
+    let y = 40;
+
+    const titulo = (t) => { if (y > 730) { doc.addPage(); y = 40; } doc.setFontSize(12); doc.setFont(undefined, 'bold'); doc.text(t, margenX, y); y += 16; doc.setFont(undefined, 'normal'); };
+    const linea = (t) => { if (y > 740) { doc.addPage(); y = 40; } doc.setFontSize(9); doc.text(t, margenX, y, { maxWidth: anchoUtil }); y += 12; };
+
+    doc.setFontSize(15);
+    doc.text('Reporte de Control de Fumigación', margenX, y); y += 18;
+    doc.setFontSize(11);
+    doc.text(r.nombreHotel, margenX, y); y += 15;
+    doc.setFontSize(9);
+    doc.text('Datos correspondientes a: ' + desde.toLocaleDateString('es-DO') + ' – ' + hasta.toLocaleDateString('es-DO'), margenX, y); y += 20;
+
+    titulo('TOTAL REPORTES: ' + r.totalReportes);
+    r.detalleReportes.forEach(d => linea('• ' + d));
+    y += 8;
+
+    titulo('PENDIENTES: ' + r.pendientes);
+    r.detallePendientes.forEach(d => linea('• ' + d));
+    y += 8;
+
+    titulo('REALIZADOS: ' + r.realizados);
+    r.detalleRealizados.forEach(d => linea('• ' + d));
+    y += 8;
+
+    titulo('ALTA SEVERIDAD: ' + r.altaSeveridad);
+    r.detalleAltaSeveridad.forEach(d => linea('• ' + d));
+    y += 8;
+
+    titulo('FUMIGACIÓN PREVENTIVA: ' + r.totalPreventivo);
+    r.detallePreventivo.forEach(d => linea('• ' + d));
+    y += 8;
+
+    titulo('COBERTURA PREVENTIVA GLOBAL POR EDIFICIO (últimos 15 días)');
+    r.cobertura.forEach(c => linea('• ' + c.edificio + ': ' + c.porcentaje + '% (' + c.cubiertas + '/' + c.total + ')'));
+
+    doc.save('reporte_fumigacion_' + Date.now() + '.pdf');
+  }).catch(err => alert(err.message));
 }
 
 function compartir() {
@@ -511,7 +693,7 @@ function cargarUsuarios() {
   callApi('listarUsuarios', { emailActor: SESSION.email }).then(usuarios => {
     document.getElementById('lista-usuarios').innerHTML = usuarios.map(u => `
       <div class="user-row ${u.estado === 'Inactivo' ? 'inactive-row' : ''}">
-        <div>${u.nombre}<div class="role">${u.email} · ${u.rol}</div></div>
+        <div>${u.nombre}<div class="role">${u.email} · ${u.rol}${u.clave ? ' · Código: <strong>' + u.clave + '</strong>' : ''}</div></div>
         <div>
           <span class="badge ${u.estado === 'Activo' ? 'realizado' : 'pendiente'}">${u.estado}</span>
           ${u.estado === 'Activo' ? `<button class="secondary" style="width:auto;padding:4px 10px;margin-left:6px;" onclick="inactivarUsuarioUI('${u.email}')">Inactivar</button>` : ''}
