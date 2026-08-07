@@ -210,7 +210,7 @@
 // ============ CONFIGURACION ============
 // Pegar aqui la URL del Web App despues de implementar el Code.gs
 const API_URL = 'https://script.google.com/macros/s/AKfycbykosmCSSYmWNEqRZE6_6vLDAIHZfW-2n6RW3M9e6kM0Az2jw2uyL05VWVYPqRTeOY7/exec';
-const FRONTEND_VERSION = 'v12-2026-08-07';
+const FRONTEND_VERSION = 'v13-2026-08-07';
 
 let SESSION = null;
 let CATALOGOS = { areas: [], insectos: [], habitaciones: [] };
@@ -733,6 +733,26 @@ function exportarPDFSeleccionados() {
   doc.save('reportes_fumigacion_' + Date.now() + '.pdf');
 }
 
+const ORDEN_COL1_INSECTOS = ['Cucarachas', 'Roedores'];
+const ORDEN_COL2_INSECTOS = ['Mosquitos', 'Hormigas', 'BedBugs-Chinches', 'Otros'];
+
+function formatearItemPDF(it, conFecha) {
+  let base = (it.detalle ? it.area + ' - ' + it.detalle : it.area) + ' · ' + it.tipoInsecto;
+  if (conFecha && it.fechaHora) base += ' · ' + new Date(it.fechaHora).toLocaleString('es-DO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return base;
+}
+
+function agruparPorInsectoPDF(items, conFecha) {
+  const col1 = [];
+  const col2 = [];
+  const empiezaCon = (tipo, prefijo) => tipo === prefijo || tipo.indexOf(prefijo + ':') === 0;
+  ORDEN_COL1_INSECTOS.forEach(t => items.filter(i => empiezaCon(i.tipoInsecto, t)).forEach(i => col1.push(formatearItemPDF(i, conFecha))));
+  ORDEN_COL2_INSECTOS.forEach(t => items.filter(i => empiezaCon(i.tipoInsecto, t)).forEach(i => col2.push(formatearItemPDF(i, conFecha))));
+  const yaUbicados = ORDEN_COL1_INSECTOS.concat(ORDEN_COL2_INSECTOS);
+  items.filter(i => !yaUbicados.some(t => empiezaCon(i.tipoInsecto, t))).forEach(i => col2.push(formatearItemPDF(i, conFecha)));
+  return { col1, col2 };
+}
+
 function exportarPDF() {
   const { desde, hasta } = rangoFechasActual();
   callApi('resumenDetallado', { desde: desde.toISOString(), hasta: hasta.toISOString(), hotel: 'DRRPC' }).then(r => {
@@ -740,10 +760,31 @@ function exportarPDF() {
     const doc = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'portrait' });
     const margenX = 36;
     const anchoUtil = 540;
+    const col2X = margenX + anchoUtil / 2 + 6;
     let y = 40;
 
     const titulo = (t) => { if (y > 730) { doc.addPage(); y = 40; } doc.setFontSize(12); doc.setFont(undefined, 'bold'); doc.text(t, margenX, y); y += 16; doc.setFont(undefined, 'normal'); };
-    const linea = (t) => { if (y > 740) { doc.addPage(); y = 40; } doc.setFontSize(9); doc.text(t, margenX, y, { maxWidth: anchoUtil }); y += 12; };
+    const lineaDosColumnas = (items, conFecha) => {
+      const { col1, col2 } = agruparPorInsectoPDF(items, conFecha);
+      if (!col1.length && !col2.length) {
+        if (y > 740) { doc.addPage(); y = 40; }
+        doc.setFontSize(9); doc.text('Sin registros.', margenX, y); y += 12;
+        return;
+      }
+      const filas = Math.max(col1.length, col2.length);
+      doc.setFontSize(9);
+      for (let i = 0; i < filas; i++) {
+        if (y > 740) { doc.addPage(); y = 40; }
+        if (col1[i]) doc.text('- ' + col1[i], margenX, y, { maxWidth: anchoUtil / 2 - 6 });
+        if (col2[i]) doc.text('- ' + col2[i], col2X, y, { maxWidth: anchoUtil / 2 - 6 });
+        y += 12;
+      }
+    };
+    const listaSimple = (items) => {
+      if (!items.length) { if (y > 740) { doc.addPage(); y = 40; } doc.setFontSize(9); doc.text('Sin registros.', margenX, y); y += 12; return; }
+      doc.setFontSize(9);
+      items.forEach(d => { if (y > 740) { doc.addPage(); y = 40; } doc.text('- ' + d, margenX, y, { maxWidth: anchoUtil }); y += 12; });
+    };
 
     doc.setFontSize(15);
     doc.text('Reporte de Control de Fumigación', margenX, y); y += 18;
@@ -753,27 +794,27 @@ function exportarPDF() {
     doc.text('Datos correspondientes a: ' + desde.toLocaleDateString('es-DO') + ' – ' + hasta.toLocaleDateString('es-DO'), margenX, y); y += 20;
 
     titulo('TOTAL REPORTES: ' + r.totalReportes);
-    r.detalleReportes.forEach(d => linea('• ' + d));
+    lineaDosColumnas(r.itemsReportes, false);
     y += 8;
 
     titulo('PENDIENTES: ' + r.pendientes);
-    r.detallePendientes.forEach(d => linea('• ' + d));
+    lineaDosColumnas(r.itemsPendientes, false);
     y += 8;
 
     titulo('REALIZADOS: ' + r.realizados);
-    r.detalleRealizados.forEach(d => linea('• ' + d));
+    lineaDosColumnas(r.itemsRealizados, false);
     y += 8;
 
     titulo('ALTA SEVERIDAD: ' + r.altaSeveridad);
-    r.detalleAltaSeveridad.forEach(d => linea('• ' + d));
+    lineaDosColumnas(r.itemsAltaSeveridad, true);
     y += 8;
 
     titulo('FUMIGACIÓN PREVENTIVA: ' + r.totalPreventivo);
-    r.detallePreventivo.forEach(d => linea('• ' + d));
+    listaSimple(r.detallePreventivo);
     y += 8;
 
     titulo('COBERTURA PREVENTIVA GLOBAL POR EDIFICIO (últimos 15 días)');
-    r.cobertura.forEach(c => linea('• ' + c.edificio + ': ' + c.porcentaje + '% (' + c.cubiertas + '/' + c.total + ')'));
+    listaSimple(r.cobertura.map(c => c.porcentaje + '% (' + c.cubiertas + '/' + c.total + ') — ' + c.edificio));
 
     doc.save('reporte_fumigacion_' + Date.now() + '.pdf');
   }).catch(err => alert(err.message));
