@@ -86,6 +86,8 @@
     </div>
   </header>
 
+  <div id="version-info" style="text-align:center;padding:4px;font-size:11px;background:#F0EFE9;border-bottom:1px solid var(--border);"></div>
+
   <div id="loading-overlay" class="hidden">
     <div id="loading-spinner"></div>
     <span>Un momento...</span>
@@ -102,6 +104,18 @@
       <div id="cap-hab-wrap">
         <label>Habitación</label>
         <input type="text" id="cap-habitacion" placeholder="Ej. 5203">
+      </div>
+      <div id="cap-rest-wrap" class="hidden">
+        <label>Restaurante</label>
+        <select id="cap-restaurante"></select>
+      </div>
+      <div id="cap-bar-wrap" class="hidden">
+        <label>Bar</label>
+        <select id="cap-bar"></select>
+      </div>
+      <div id="cap-cocina-wrap" class="hidden">
+        <label>Cocina</label>
+        <select id="cap-cocina"></select>
       </div>
       <label>Tipo de insecto</label>
       <select id="cap-insecto"></select>
@@ -128,6 +142,7 @@
     <!-- REPORTES / CERRAR -->
     <section id="tab-reportes" class="card hidden">
       <h2>Reportes correctivos</h2>
+      <div id="reportes-filtro-fecha" class="hidden" style="font-size:12px;color:var(--text-muted);margin-bottom:8px;"></div>
       <div class="filters" id="reportes-filtros">
         <button data-f="todos" class="active">Todos</button>
         <button data-f="pendiente">Pendientes</button>
@@ -191,6 +206,7 @@
 // ============ CONFIGURACION ============
 // Pegar aqui la URL del Web App despues de implementar el Code.gs
 const API_URL = 'https://script.google.com/macros/s/AKfycbykosmCSSYmWNEqRZE6_6vLDAIHZfW-2n6RW3M9e6kM0Az2jw2uyL05VWVYPqRTeOY7/exec';
+const FRONTEND_VERSION = 'v10-2026-08-07';
 
 let SESSION = null;
 let CATALOGOS = { areas: [], insectos: [], habitaciones: [] };
@@ -277,6 +293,10 @@ function iniciarApp() {
 
 let TAB_ACTUAL = 'capturar';
 
+let FILTRO_FECHA_DESDE = null;
+let FILTRO_FECHA_HASTA = null;
+let MANTENER_FILTRO_FECHA = false;
+
 function mostrarTab(tab, btnEl) {
   TAB_ACTUAL = tab;
   document.querySelectorAll('#nav-tabs button').forEach(b => b.classList.remove('active'));
@@ -285,7 +305,11 @@ function mostrarTab(tab, btnEl) {
     document.getElementById('tab-' + t).classList.add('hidden');
   });
   document.getElementById('tab-' + tab).classList.remove('hidden');
-  if (tab === 'reportes') cargarReportes();
+  if (tab === 'reportes') {
+    if (!MANTENER_FILTRO_FECHA) { FILTRO_FECHA_DESDE = null; FILTRO_FECHA_HASTA = null; }
+    MANTENER_FILTRO_FECHA = false;
+    cargarReportes();
+  }
   if (tab === 'preventivo') cargarPreventivo();
   if (tab === 'dashboard') cargarDashboard();
   if (tab === 'usuarios') cargarUsuarios();
@@ -304,6 +328,12 @@ function poblarSelects() {
   areaSel.innerHTML = CATALOGOS.areas.map(a => `<option value="${a}">${a}</option>`).join('');
   const insectoSel = document.getElementById('cap-insecto');
   insectoSel.innerHTML = CATALOGOS.insectos.map(i => `<option value="${i}">${i}</option>`).join('');
+  const restSel = document.getElementById('cap-restaurante');
+  if (restSel) restSel.innerHTML = (CATALOGOS.restaurantes || []).map(r => `<option value="${r}">${r}</option>`).join('');
+  const barSel = document.getElementById('cap-bar');
+  if (barSel) barSel.innerHTML = (CATALOGOS.bares || []).map(b => `<option value="${b}">${b}</option>`).join('');
+  const cocinaSel = document.getElementById('cap-cocina');
+  if (cocinaSel) cocinaSel.innerHTML = (CATALOGOS.cocinas || []).map(c => `<option value="${c}">${c}</option>`).join('');
   toggleHabitacionField();
 
   const rolSel = document.getElementById('us-rol');
@@ -313,12 +343,31 @@ function poblarSelects() {
     CreadorOperacion: ['Operacion']
   }[SESSION.rol] || [];
   if (rolSel) rolSel.innerHTML = rolesPermitidos.map(r => `<option value="${r}">${r}</option>`).join('');
+
+  mostrarVersion();
+}
+
+function mostrarVersion() {
+  const el = document.getElementById('version-info');
+  if (!el) return;
+  const backend = CATALOGOS.version || '(sin version)';
+  const coincide = backend === FRONTEND_VERSION;
+  el.textContent = 'Backend: ' + backend + ' · Frontend: ' + FRONTEND_VERSION + (coincide ? ' ✓' : ' — DESACTUALIZADO, revisa que subiste ambos archivos');
+  el.style.color = coincide ? 'var(--text-muted)' : 'var(--red)';
 }
 
 function toggleHabitacionField() {
   const area = document.getElementById('cap-area').value;
   const esHabitacion = area === 'Habitacion';
+  const esRestaurante = area === 'Restaurante';
+  const esBar = area === 'Bar';
+  const esCocina = area === 'Cocina';
+
   document.getElementById('cap-hab-wrap').classList.toggle('hidden', !esHabitacion);
+  document.getElementById('cap-rest-wrap').classList.toggle('hidden', !esRestaurante);
+  document.getElementById('cap-bar-wrap').classList.toggle('hidden', !esBar);
+  document.getElementById('cap-cocina-wrap').classList.toggle('hidden', !esCocina);
+
   if (!esHabitacion) document.getElementById('cap-habitacion').value = ''; // nunca dejar un numero pegado de un area anterior
 }
 
@@ -356,18 +405,29 @@ function fotoABase64(inputId) {
 
 function enviarReporte() {
   const area = document.getElementById('cap-area').value;
-  const habitacion = area === 'Habitacion' ? document.getElementById('cap-habitacion').value.trim() : '';
+  let detalle = '';
+  if (area === 'Habitacion') detalle = document.getElementById('cap-habitacion').value.trim();
+  else if (area === 'Restaurante') detalle = document.getElementById('cap-restaurante').value;
+  else if (area === 'Bar') detalle = document.getElementById('cap-bar').value;
+  else if (area === 'Cocina') detalle = document.getElementById('cap-cocina').value;
+
   const tipoInsecto = document.getElementById('cap-insecto').value;
   const observaciones = document.getElementById('cap-obs').value.trim();
 
   fotoABase64('cap-foto').then(foto => {
-    const data = { hotel: 'DRRPC', area, habitacion, tipoInsecto, usuarioReporta: SESSION.email, fotoInicial: foto, observaciones };
+    const data = { hotel: 'DRRPC', area, habitacion: detalle, tipoInsecto, usuarioReporta: SESSION.email, fotoInicial: foto, observaciones };
     callApi('crearReporte', { data: JSON.stringify(data) })
       .then(res => {
-        document.getElementById('cap-msg').innerHTML =
-          '<div class="msg ok">Reporte guardado. Este es el reporte número ' + res.conteoAcumulado + ' para esta habitación.</div>';
+        const etiqueta = { Habitacion: 'esta habitación', Restaurante: 'este restaurante', Bar: 'este bar' }[area];
+        document.getElementById('cap-msg').innerHTML = '<div class="msg ok">Reporte guardado.' +
+          (etiqueta ? ' Este es el reporte número ' + res.conteoAcumulado + ' para ' + etiqueta + '.' : '') + '</div>';
+
+        // limpiar formulario completo, listo para el siguiente reporte
         document.getElementById('cap-area').selectedIndex = 0;
         document.getElementById('cap-habitacion').value = '';
+        document.getElementById('cap-restaurante').selectedIndex = 0;
+        document.getElementById('cap-bar').selectedIndex = 0;
+        document.getElementById('cap-cocina').selectedIndex = 0;
         document.getElementById('cap-insecto').selectedIndex = 0;
         document.getElementById('cap-obs').value = '';
         document.getElementById('cap-foto').value = '';
@@ -427,15 +487,37 @@ document.addEventListener('click', e => {
 
 function irAReportesConFiltro(filtro) {
   FILTRO_REPORTES = filtro;
+  const { desde, hasta } = rangoFechasActual();
+  FILTRO_FECHA_DESDE = desde;
+  FILTRO_FECHA_HASTA = hasta;
+  MANTENER_FILTRO_FECHA = true;
   const nav = document.getElementById('nav-tabs');
   const btn = Array.from(nav.querySelectorAll('button')).find(b => b.textContent === 'Reportes');
   mostrarTab('reportes', btn);
 }
 
+function quitarFiltroFecha() {
+  FILTRO_FECHA_DESDE = null;
+  FILTRO_FECHA_HASTA = null;
+  cargarReportes();
+}
+
 function cargarReportes() {
-  callApi('obtenerReportes', { filtros: JSON.stringify({ hotel: 'DRRPC' }) }).then(reportes => {
+  const filtros = { hotel: 'DRRPC' };
+  if (FILTRO_FECHA_DESDE) filtros.desde = FILTRO_FECHA_DESDE;
+  if (FILTRO_FECHA_HASTA) filtros.hasta = FILTRO_FECHA_HASTA;
+  callApi('obtenerReportes', { filtros: JSON.stringify(filtros) }).then(reportes => {
     REPORTES_CACHE = reportes.slice().reverse();
     document.querySelectorAll('#reportes-filtros button').forEach(b => b.classList.toggle('active', b.dataset.f === FILTRO_REPORTES));
+    const avisoFecha = document.getElementById('reportes-filtro-fecha');
+    if (avisoFecha) {
+      if (FILTRO_FECHA_DESDE) {
+        avisoFecha.innerHTML = 'Mostrando ' + new Date(FILTRO_FECHA_DESDE).toLocaleDateString('es-DO') + ' – ' + new Date(FILTRO_FECHA_HASTA).toLocaleDateString('es-DO') + ' · <a href="#" onclick="quitarFiltroFecha();return false;">Ver todos</a>';
+        avisoFecha.classList.remove('hidden');
+      } else {
+        avisoFecha.classList.add('hidden');
+      }
+    }
     pintarReportes();
   });
 }
