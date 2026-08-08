@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Control de Fumigación</title>
+<title>Control de Fumigación Grupo Martinón</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --teal:#0F6E56; --teal-dark:#085041; --teal-light:#E1F5EE;
@@ -66,7 +67,7 @@
 
 <div id="login-screen">
   <div class="card" id="login-card">
-    <h2>Control de Fumigación</h2>
+    <h2>Control de Fumigación Grupo Martinón</h2>
     <label>Código de acceso</label>
     <input type="text" id="login-clave" placeholder="Ej. CC4821" maxlength="10" style="text-transform:uppercase;letter-spacing:1px;font-size:18px;text-align:center;" autocomplete="off">
     <button class="primary" onclick="doLogin()">Entrar</button>
@@ -77,7 +78,7 @@
 
 <div id="app" class="hidden">
   <header>
-    <h1>Control de Fumigación</h1>
+    <h1>Control de Fumigación Grupo Martinón</h1>
     <div class="user-info">
       <span id="user-name"></span><br>
       <span id="user-role"></span>
@@ -87,6 +88,11 @@
   </header>
 
   <div id="version-info" style="text-align:center;padding:4px;font-size:11px;background:#F0EFE9;border-bottom:1px solid var(--border);"></div>
+
+  <div id="selector-hotel-wrap" class="hidden" style="padding:8px 16px;background:#fff;border-bottom:1px solid var(--border);">
+    <label style="margin:0 8px 0 0;display:inline;">Hotel:</label>
+    <select id="selector-hotel" onchange="cambiarHotel()" style="width:auto;display:inline-block;"></select>
+  </div>
 
   <div id="loading-overlay" class="hidden">
     <div id="loading-spinner"></div>
@@ -203,6 +209,16 @@
       <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
       <div id="lista-usuarios"></div>
     </section>
+
+    <!-- HOTELES (solo Master) -->
+    <section id="tab-hoteles" class="card hidden">
+      <h2>Gestión de hoteles del portafolio</h2>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">
+        Para activar un hotel, primero sube su catálogo de habitaciones (Excel con columnas: Habitación, Edificio).
+        Los restaurantes y bares ya están precargados desde el Product Guide de cada propiedad cuando están disponibles.
+      </p>
+      <div id="lista-hoteles"></div>
+    </section>
   </main>
 </div>
 
@@ -210,10 +226,12 @@
 // ============ CONFIGURACION ============
 // Pegar aqui la URL del Web App despues de implementar el Code.gs
 const API_URL = 'https://script.google.com/macros/s/AKfycbykosmCSSYmWNEqRZE6_6vLDAIHZfW-2n6RW3M9e6kM0Az2jw2uyL05VWVYPqRTeOY7/exec';
-const FRONTEND_VERSION = 'v13-2026-08-07';
+const FRONTEND_VERSION = 'v14-2026-08-07';
 
 let SESSION = null;
 let CATALOGOS = { areas: [], insectos: [], habitaciones: [] };
+let HOTEL_ACTUAL = 'DRRPC';
+let HOTELES_ACTIVOS = [{ codigo: 'DRRPC', nombre: 'Dreams Royal Beach Punta Cana' }];
 
 let solicitudesActivas = 0;
 function mostrarCargando(mostrar) {
@@ -262,13 +280,13 @@ function logout() {
 
 // ============ NAV POR ROL ============
 const TABS_POR_ROL = {
-  Master:            ['capturar','preventivo','reportes','dashboard','usuarios'],
+  Master:            ['capturar','preventivo','reportes','dashboard','usuarios','hoteles'],
   CreadorProveedor:  ['capturar','preventivo','reportes','dashboard','usuarios'],
   CreadorOperacion:  ['capturar','reportes','dashboard','usuarios'],
   Fumigacion:        ['capturar','preventivo','reportes','dashboard'],
   Operacion:         ['capturar','reportes','dashboard']
 };
-const LABELS = { capturar:'Reportar', preventivo:'Preventivo', reportes:'Reportes', dashboard:'Dashboard', usuarios:'Usuarios' };
+const LABELS = { capturar:'Reportar', preventivo:'Preventivo', reportes:'Reportes', dashboard:'Dashboard', usuarios:'Usuarios', hoteles:'Hoteles' };
 
 function iniciarApp() {
   document.getElementById('login-screen').classList.add('hidden');
@@ -287,9 +305,11 @@ function iniciarApp() {
     nav.appendChild(btn);
   });
 
-  callApi('catalogos', {}).then(cat => {
+  callApi('catalogos', { hotel: HOTEL_ACTUAL }).then(cat => {
     CATALOGOS = cat;
+    if (cat.hotelesActivos && cat.hotelesActivos.length) HOTELES_ACTIVOS = cat.hotelesActivos;
     poblarSelects();
+    actualizarSelectorHotel();
   });
 
   mostrarTab(tabs[0], nav.querySelector('button'));
@@ -305,7 +325,7 @@ function mostrarTab(tab, btnEl) {
   TAB_ACTUAL = tab;
   document.querySelectorAll('#nav-tabs button').forEach(b => b.classList.remove('active'));
   if (btnEl) btnEl.classList.add('active');
-  ['capturar','preventivo','reportes','dashboard','usuarios'].forEach(t => {
+  ['capturar','preventivo','reportes','dashboard','usuarios','hoteles'].forEach(t => {
     document.getElementById('tab-' + t).classList.add('hidden');
   });
   document.getElementById('tab-' + tab).classList.remove('hidden');
@@ -317,6 +337,7 @@ function mostrarTab(tab, btnEl) {
   if (tab === 'preventivo') cargarPreventivo();
   if (tab === 'dashboard') cargarDashboard();
   if (tab === 'usuarios') cargarUsuarios();
+  if (tab === 'hoteles') cargarHoteles();
 }
 
 function actualizarVistaActual() {
@@ -324,7 +345,8 @@ function actualizarVistaActual() {
   else if (TAB_ACTUAL === 'preventivo') cargarPreventivo();
   else if (TAB_ACTUAL === 'dashboard') cargarDashboard();
   else if (TAB_ACTUAL === 'usuarios') cargarUsuarios();
-  else callApi('catalogos', {}).then(cat => { CATALOGOS = cat; poblarSelects(); });
+  else if (TAB_ACTUAL === 'hoteles') cargarHoteles();
+  else callApi('catalogos', { hotel: HOTEL_ACTUAL }).then(cat => { CATALOGOS = cat; poblarSelects(); });
 }
 
 function poblarSelects() {
@@ -431,7 +453,7 @@ function enviarReporte() {
   const observaciones = document.getElementById('cap-obs').value.trim();
 
   fotoABase64('cap-foto').then(foto => {
-    const data = { hotel: 'DRRPC', area, habitacion: detalle, tipoInsecto, usuarioReporta: SESSION.email, fotoInicial: foto, observaciones };
+    const data = { hotel: HOTEL_ACTUAL, area, habitacion: detalle, tipoInsecto, usuarioReporta: SESSION.email, fotoInicial: foto, observaciones };
     callApi('crearReporte', { data: JSON.stringify(data) })
       .then(res => {
         const etiqueta = { Habitacion: 'esta habitación', Restaurante: 'este restaurante', Bar: 'este bar' }[area];
@@ -472,7 +494,7 @@ function registrarPreventivoUI() {
 }
 
 function cargarPreventivo() {
-  callApi('obtenerPreventivo', { filtros: JSON.stringify({ hotel: 'DRRPC' }) }).then(registros => {
+  callApi('obtenerPreventivo', { filtros: JSON.stringify({ hotel: HOTEL_ACTUAL }) }).then(registros => {
     const cont = document.getElementById('prev-lista');
     if (!registros.length) { cont.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Sin registros todavía.</p>'; return; }
     cont.innerHTML = registros.slice(0, 30).map(r => `
@@ -521,7 +543,7 @@ function quitarFiltroFecha() {
 }
 
 function cargarReportes() {
-  const filtros = { hotel: 'DRRPC' };
+  const filtros = { hotel: HOTEL_ACTUAL };
   if (FILTRO_FECHA_DESDE) filtros.desde = FILTRO_FECHA_DESDE;
   if (FILTRO_FECHA_HASTA) filtros.hasta = FILTRO_FECHA_HASTA;
   callApi('obtenerReportes', { filtros: JSON.stringify(filtros) }).then(reportes => {
@@ -635,7 +657,7 @@ function rangoFechasActual() {
 
 function cargarDashboard() {
   const { desde, hasta } = rangoFechasActual();
-  callApi('obtenerReportes', { filtros: JSON.stringify({ desde, hasta, hotel: 'DRRPC' }) }).then(reportes => {
+  callApi('obtenerReportes', { filtros: JSON.stringify({ desde, hasta, hotel: HOTEL_ACTUAL }) }).then(reportes => {
     pintarKPIs(reportes);
     pintarCharts(reportes);
   });
@@ -706,7 +728,7 @@ function exportarPDFSeleccionados() {
   const alturaImg = compacto ? 110 : 220;
 
   doc.setFontSize(14);
-  doc.text('Reporte de Control de Fumigación', margenX, y); y += 18;
+  doc.text('Reporte de Control de Fumigación Grupo Martinón', margenX, y); y += 18;
   doc.setFontSize(9);
   doc.text('Generado: ' + new Date().toLocaleString('es-DO'), margenX, y); y += 20;
 
@@ -755,7 +777,7 @@ function agruparPorInsectoPDF(items, conFecha) {
 
 function exportarPDF() {
   const { desde, hasta } = rangoFechasActual();
-  callApi('resumenDetallado', { desde: desde.toISOString(), hasta: hasta.toISOString(), hotel: 'DRRPC' }).then(r => {
+  callApi('resumenDetallado', { desde: desde.toISOString(), hasta: hasta.toISOString(), hotel: HOTEL_ACTUAL }).then(r => {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'portrait' });
     const margenX = 36;
@@ -787,7 +809,7 @@ function exportarPDF() {
     };
 
     doc.setFontSize(15);
-    doc.text('Reporte de Control de Fumigación', margenX, y); y += 18;
+    doc.text('Reporte de Control de Fumigación Grupo Martinón', margenX, y); y += 18;
     doc.setFontSize(11);
     doc.text(r.nombreHotel, margenX, y); y += 15;
     doc.setFontSize(9);
@@ -822,7 +844,7 @@ function exportarPDF() {
 
 function compartir() {
   if (navigator.share) {
-    navigator.share({ title: 'Control de Fumigación', url: window.location.href });
+    navigator.share({ title: 'Control de Fumigación Grupo Martinón', url: window.location.href });
   } else {
     navigator.clipboard.writeText(window.location.href);
     alert('Link copiado al portapapeles.');
@@ -864,6 +886,79 @@ function crearUsuarioUI() {
 function inactivarUsuarioUI(email) {
   if (!confirm('¿Inactivar a ' + email + '? El histórico se conserva, solo pierde acceso.')) return;
   callApi('inactivarUsuario', { emailActor: SESSION.email, emailObjetivo: email }).then(cargarUsuarios);
+}
+
+// ============ SELECTOR DE HOTEL ============
+function actualizarSelectorHotel() {
+  const wrap = document.getElementById('selector-hotel-wrap');
+  if (HOTELES_ACTIVOS.length <= 1) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  const sel = document.getElementById('selector-hotel');
+  sel.innerHTML = HOTELES_ACTIVOS.map(h => `<option value="${h.codigo}" ${h.codigo === HOTEL_ACTUAL ? 'selected' : ''}>${h.nombre}</option>`).join('');
+}
+
+function cambiarHotel() {
+  HOTEL_ACTUAL = document.getElementById('selector-hotel').value;
+  callApi('catalogos', { hotel: HOTEL_ACTUAL }).then(cat => { CATALOGOS = cat; poblarSelects(); actualizarVistaActual(); });
+}
+
+// ============ HOTELES (solo Master) ============
+function cargarHoteles() {
+  callApi('listarHoteles', {}).then(hoteles => {
+    document.getElementById('lista-hoteles').innerHTML = hoteles.map(h => `
+      <div class="card" style="margin-bottom:10px;padding:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><strong>${h.nombre}</strong><div class="role">${h.codigo}</div></div>
+          <span class="badge ${h.estado === 'Activo' ? 'realizado' : 'pendiente'}">${h.estado}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">
+          ${h.totalHabitaciones} habitaciones · ${h.totalEdificios} edificios · ${h.totalRestaurantes} restaurantes · ${h.totalBares} bares
+        </div>
+        <label style="margin-top:10px;">Subir/reemplazar catálogo de habitaciones (Excel)</label>
+        <input type="file" id="excel-${h.codigo}" accept=".xlsx,.xls">
+        <button class="secondary" onclick="subirExcelHabitaciones('${h.codigo}')">Subir catálogo</button>
+        <div id="msg-hotel-${h.codigo}"></div>
+        <div style="margin-top:10px;">
+          ${h.estado === 'Activo'
+            ? `<button class="secondary" style="color:var(--red);border-color:var(--red);" onclick="cambiarEstadoHotel('${h.codigo}', false)">Desactivar</button>`
+            : `<button class="secondary" onclick="cambiarEstadoHotel('${h.codigo}', true)">Activar</button>`}
+        </div>
+      </div>
+    `).join('');
+  });
+}
+
+function subirExcelHabitaciones(codigo) {
+  const input = document.getElementById('excel-' + codigo);
+  const file = input.files[0];
+  if (!file) { alert('Selecciona un archivo Excel primero.'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const hoja = wb.Sheets[wb.SheetNames[0]];
+      const filas = XLSX.utils.sheet_to_json(hoja, { header: 1 }).slice(1) // primera fila = encabezados
+        .filter(f => f[0] && f[1])
+        .map(f => [String(f[0]).trim(), String(f[1]).trim()]);
+      if (!filas.length) { alert('No se encontraron filas válidas. La primera columna debe ser el número de habitación y la segunda el edificio.'); return; }
+      callApi('subirHabitacionesHotel', { emailActor: SESSION.email, codigo, filas: JSON.stringify(filas) })
+        .then(res => {
+          document.getElementById('msg-hotel-' + codigo).innerHTML = '<div class="msg ok">Catálogo actualizado: ' + res.totalHabitaciones + ' habitaciones.</div>';
+          cargarHoteles();
+        })
+        .catch(err => { document.getElementById('msg-hotel-' + codigo).innerHTML = '<div class="msg error">' + err.message + '</div>'; });
+    } catch (err) {
+      alert('No se pudo leer el archivo. Confirma que sea un .xlsx válido.');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function cambiarEstadoHotel(codigo, activar) {
+  const accion = activar ? 'activarHotel' : 'desactivarHotel';
+  callApi(accion, { emailActor: SESSION.email, codigo })
+    .then(() => cargarHoteles())
+    .catch(err => alert(err.message));
 }
 </script>
 </body>
