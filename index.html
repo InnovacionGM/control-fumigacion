@@ -140,6 +140,7 @@
     <!-- PREVENTIVO -->
     <section id="tab-preventivo" class="card hidden">
       <h2>Fumigación preventiva de habitación</h2>
+      <div id="metas-preventivo" class="kpi-grid" style="margin-bottom:14px;"></div>
       <label>Número de habitación</label>
       <input type="text" id="prev-habitacion" placeholder="Ej. 5203">
       <button class="primary" onclick="registrarPreventivoUI()">Guardar</button>
@@ -189,6 +190,10 @@
         <h2>Cobertura preventiva por edificio (últimos 15 días)</h2>
         <div class="heat-grid" id="heat-grid"></div>
       </div>
+      <div class="card">
+        <h2>Meta de fumigación preventiva</h2>
+        <div id="metas-dashboard" class="kpi-grid"></div>
+      </div>
       <button class="secondary" onclick="exportarPDF()">Exportar PDF</button>
       <button class="secondary" onclick="compartir()">Compartir</button>
     </section>
@@ -219,6 +224,28 @@
       </p>
       <div id="lista-hoteles"></div>
     </section>
+
+    <!-- DESTINATARIOS (solo Master) -->
+    <section id="tab-destinatarios" class="card hidden">
+      <h2>Destinatarios de reportes y alertas</h2>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">
+        Aquí controlas quién recibe el reporte diario y/o la alerta de alta severidad, y de qué hotel(es).
+        El ruteo automático por área (Cocina/Restaurante/Bar a Calidad, alta severidad al proveedor) sigue aplicando
+        igual, esta lista es una capa adicional de control por hotel.
+      </p>
+      <label>Nombre</label>
+      <input type="text" id="dest-nombre">
+      <label>Email</label>
+      <input type="email" id="dest-email">
+      <label>Hoteles (código separado por coma, o "Todos")</label>
+      <input type="text" id="dest-hoteles" placeholder="Ej. DRRPC o Todos">
+      <label style="display:flex;align-items:center;gap:6px;margin-top:10px;"><input type="checkbox" id="dest-reporte-diario" style="width:auto;" checked> Recibe reporte diario</label>
+      <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="dest-alerta-severidad" style="width:auto;"> Recibe alerta de alta severidad (base, aparte del ruteo por área)</label>
+      <button class="primary" onclick="crearDestinatarioUI()">Agregar destinatario</button>
+      <div id="dest-msg"></div>
+      <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
+      <div id="lista-destinatarios"></div>
+    </section>
   </main>
 </div>
 
@@ -226,7 +253,7 @@
 // ============ CONFIGURACION ============
 // Pegar aqui la URL del Web App despues de implementar el Code.gs
 const API_URL = 'https://script.google.com/macros/s/AKfycbykosmCSSYmWNEqRZE6_6vLDAIHZfW-2n6RW3M9e6kM0Az2jw2uyL05VWVYPqRTeOY7/exec';
-const FRONTEND_VERSION = 'v14-2026-08-07';
+const FRONTEND_VERSION = 'v15-2026-08-08';
 
 let SESSION = null;
 let CATALOGOS = { areas: [], insectos: [], habitaciones: [] };
@@ -280,13 +307,13 @@ function logout() {
 
 // ============ NAV POR ROL ============
 const TABS_POR_ROL = {
-  Master:            ['capturar','preventivo','reportes','dashboard','usuarios','hoteles'],
+  Master:            ['capturar','preventivo','reportes','dashboard','usuarios','hoteles','destinatarios'],
   CreadorProveedor:  ['capturar','preventivo','reportes','dashboard','usuarios'],
   CreadorOperacion:  ['capturar','reportes','dashboard','usuarios'],
   Fumigacion:        ['capturar','preventivo','reportes','dashboard'],
   Operacion:         ['capturar','reportes','dashboard']
 };
-const LABELS = { capturar:'Reportar', preventivo:'Preventivo', reportes:'Reportes', dashboard:'Dashboard', usuarios:'Usuarios', hoteles:'Hoteles' };
+const LABELS = { capturar:'Reportar', preventivo:'Preventivo', reportes:'Reportes', dashboard:'Dashboard', usuarios:'Usuarios', hoteles:'Hoteles', destinatarios:'Destinatarios' };
 
 function iniciarApp() {
   document.getElementById('login-screen').classList.add('hidden');
@@ -325,7 +352,7 @@ function mostrarTab(tab, btnEl) {
   TAB_ACTUAL = tab;
   document.querySelectorAll('#nav-tabs button').forEach(b => b.classList.remove('active'));
   if (btnEl) btnEl.classList.add('active');
-  ['capturar','preventivo','reportes','dashboard','usuarios','hoteles'].forEach(t => {
+  ['capturar','preventivo','reportes','dashboard','usuarios','hoteles','destinatarios'].forEach(t => {
     document.getElementById('tab-' + t).classList.add('hidden');
   });
   document.getElementById('tab-' + tab).classList.remove('hidden');
@@ -338,6 +365,7 @@ function mostrarTab(tab, btnEl) {
   if (tab === 'dashboard') cargarDashboard();
   if (tab === 'usuarios') cargarUsuarios();
   if (tab === 'hoteles') cargarHoteles();
+  if (tab === 'destinatarios') cargarDestinatarios();
 }
 
 function actualizarVistaActual() {
@@ -346,6 +374,7 @@ function actualizarVistaActual() {
   else if (TAB_ACTUAL === 'dashboard') cargarDashboard();
   else if (TAB_ACTUAL === 'usuarios') cargarUsuarios();
   else if (TAB_ACTUAL === 'hoteles') cargarHoteles();
+  else if (TAB_ACTUAL === 'destinatarios') cargarDestinatarios();
   else callApi('catalogos', { hotel: HOTEL_ACTUAL }).then(cat => { CATALOGOS = cat; poblarSelects(); });
 }
 
@@ -493,7 +522,17 @@ function registrarPreventivoUI() {
     });
 }
 
+function pintarMetasPreventivo(contenedorId, metas) {
+  document.getElementById(contenedorId).innerHTML = `
+    <div class="kpi"><div class="label">Meta diaria</div><div class="value">${metas.metaDiariaMin}–${metas.metaDiariaMax}</div></div>
+    <div class="kpi"><div class="label">Completitud del mes</div><div class="value">${metas.porcentajeMensual}%</div></div>
+    <div class="kpi"><div class="label">Faltan este mes</div><div class="value">${metas.faltanMes}</div></div>
+    <div class="kpi"><div class="label">Completitud del año</div><div class="value">${metas.porcentajeAnual}%</div></div>
+  `;
+}
+
 function cargarPreventivo() {
+  callApi('metasPreventivas', { hotel: HOTEL_ACTUAL }).then(metas => pintarMetasPreventivo('metas-preventivo', metas));
   callApi('obtenerPreventivo', { filtros: JSON.stringify({ hotel: HOTEL_ACTUAL }) }).then(registros => {
     const cont = document.getElementById('prev-lista');
     if (!registros.length) { cont.innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Sin registros todavía.</p>'; return; }
@@ -661,7 +700,8 @@ function cargarDashboard() {
     pintarKPIs(reportes);
     pintarCharts(reportes);
   });
-  callApi('coberturaPreventiva', {}).then(pintarHeatmap);
+  callApi('coberturaPreventiva', { hotel: HOTEL_ACTUAL }).then(pintarHeatmap);
+  callApi('metasPreventivas', { hotel: HOTEL_ACTUAL }).then(metas => pintarMetasPreventivo('metas-dashboard', metas));
 }
 
 function pintarKPIs(reportes) {
@@ -838,6 +878,13 @@ function exportarPDF() {
     titulo('COBERTURA PREVENTIVA GLOBAL POR EDIFICIO (últimos 15 días)');
     listaSimple(r.cobertura.map(c => c.porcentaje + '% (' + c.cubiertas + '/' + c.total + ') — ' + c.edificio));
 
+    titulo('META DE FUMIGACIÓN PREVENTIVA');
+    listaSimple([
+      'Meta diaria: ' + r.metas.metaDiariaMin + ' a ' + r.metas.metaDiariaMax + ' habitaciones',
+      r.metas.porcentajeMensual + '% (' + r.metas.fumigadasMes + '/' + r.metas.metaMensual + ') — completitud del mes, faltan ' + r.metas.faltanMes,
+      r.metas.porcentajeAnual + '% (' + r.metas.fumigadasAnio + '/' + r.metas.metaAnual + ') — completitud acumulada del año, faltan ' + r.metas.faltanAnio,
+    ]);
+
     doc.save('reporte_fumigacion_' + Date.now() + '.pdf');
   }).catch(err => alert(err.message));
 }
@@ -959,6 +1006,45 @@ function cambiarEstadoHotel(codigo, activar) {
   callApi(accion, { emailActor: SESSION.email, codigo })
     .then(() => cargarHoteles())
     .catch(err => alert(err.message));
+}
+
+// ============ DESTINATARIOS (solo Master) ============
+function cargarDestinatarios() {
+  callApi('listarDestinatarios', {}).then(lista => {
+    document.getElementById('lista-destinatarios').innerHTML = lista.map(d => `
+      <div class="user-row ${d.estado === 'Inactivo' ? 'inactive-row' : ''}">
+        <div>${d.nombre}<div class="role">${d.email} · ${d.hoteles} · ${d.reporteDiario === 'Si' ? 'Reporte diario' : ''}${d.reporteDiario === 'Si' && d.alertaSeveridad === 'Si' ? ' + ' : ''}${d.alertaSeveridad === 'Si' ? 'Alerta severidad' : ''}</div></div>
+        <div>
+          <span class="badge ${d.estado === 'Activo' ? 'realizado' : 'pendiente'}">${d.estado}</span>
+          <button class="secondary" style="width:auto;padding:4px 10px;margin-left:6px;" onclick="cambiarEstadoDestinatarioUI('${d.email}', ${d.estado === 'Activo' ? 'false' : 'true'})">${d.estado === 'Activo' ? 'Inactivar' : 'Reactivar'}</button>
+        </div>
+      </div>
+    `).join('');
+  });
+}
+
+function crearDestinatarioUI() {
+  const nombre = document.getElementById('dest-nombre').value.trim();
+  const email = document.getElementById('dest-email').value.trim();
+  const hoteles = document.getElementById('dest-hoteles').value.trim() || 'Todos';
+  const reporteDiario = document.getElementById('dest-reporte-diario').checked;
+  const alertaSeveridad = document.getElementById('dest-alerta-severidad').checked;
+  callApi('agregarDestinatario', { emailActor: SESSION.email, email, nombre, hoteles, reporteDiario, alertaSeveridad })
+    .then(() => {
+      document.getElementById('dest-msg').innerHTML = '<div class="msg ok">Destinatario agregado.</div>';
+      document.getElementById('dest-nombre').value = '';
+      document.getElementById('dest-email').value = '';
+      document.getElementById('dest-hoteles').value = '';
+      document.getElementById('dest-reporte-diario').checked = true;
+      document.getElementById('dest-alerta-severidad').checked = false;
+      cargarDestinatarios();
+    })
+    .catch(err => { document.getElementById('dest-msg').innerHTML = '<div class="msg error">' + err.message + '</div>'; });
+}
+
+function cambiarEstadoDestinatarioUI(email, activar) {
+  const accion = activar ? 'activarDestinatario' : 'desactivarDestinatario';
+  callApi(accion, { emailActor: SESSION.email, email }).then(cargarDestinatarios).catch(err => alert(err.message));
 }
 </script>
 </body>
