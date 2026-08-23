@@ -69,7 +69,7 @@
   <div class="card" id="login-card">
     <h2>Control de Fumigación Grupo Martinón</h2>
     <label>Código de acceso</label>
-    <input type="text" id="login-clave" placeholder="Ej. CC4821" maxlength="10" style="text-transform:uppercase;letter-spacing:1px;font-size:18px;text-align:center;" autocomplete="off">
+    <input type="password" id="login-clave" placeholder="Ej. CC4821" maxlength="10" style="text-transform:uppercase;letter-spacing:1px;font-size:18px;text-align:center;" autocomplete="off">
     <button class="primary" onclick="doLogin()">Entrar</button>
     <div id="login-msg"></div>
     <script>document.getElementById('login-clave').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });</script>
@@ -123,11 +123,19 @@
         <label>Cocina</label>
         <select id="cap-cocina"></select>
       </div>
+      <div id="cap-ubicacion-wrap" class="hidden">
+        <label>¿Dónde exactamente?</label>
+        <input type="text" id="cap-ubicacion" placeholder="Ej. Piscina principal, Jardín zona norte, Oficina de RRHH">
+      </div>
       <label>Tipo de insecto</label>
       <select id="cap-insecto" onchange="toggleInsectoOtro()"></select>
       <div id="cap-insecto-otro-wrap" class="hidden">
         <label>¿Cuál?</label>
         <input type="text" id="cap-insecto-otro" placeholder="Especifica qué insecto es">
+      </div>
+      <div id="cap-nombre-reportero-wrap" class="hidden">
+        <label>Tu nombre y apellido</label>
+        <input type="text" id="cap-nombre-reportero" placeholder="Ej. Juan Pérez">
       </div>
       <label>Observaciones (opcional)</label>
       <textarea id="cap-obs"></textarea>
@@ -208,6 +216,7 @@
         <input type="email" id="us-email">
         <label>Rol</label>
         <select id="us-rol"></select>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:10px;"><input type="checkbox" id="us-generico" style="width:auto;"> Es un usuario genérico (compartido por varias personas)</label>
         <button class="primary" onclick="crearUsuarioUI()">Crear usuario</button>
         <div id="us-msg"></div>
       </div>
@@ -229,31 +238,34 @@
     <section id="tab-destinatarios" class="card hidden">
       <h2>Destinatarios de reportes y alertas</h2>
       <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">
-        Aquí controlas quién recibe el reporte diario y/o la alerta de alta severidad, y de qué hotel(es).
-        El ruteo automático por área (Cocina/Restaurante/Bar a Calidad, alta severidad al proveedor) sigue aplicando
-        igual, esta lista es una capa adicional de control por hotel.
+        Aquí controlas quién recibe el reporte diario y/o cada tipo de alerta de alta severidad, y de qué hotel(es).
       </p>
-      <label>Nombre</label>
-      <input type="text" id="dest-nombre">
-      <label>Email</label>
-      <input type="email" id="dest-email">
-      <label>Hoteles (código separado por coma, o "Todos")</label>
-      <input type="text" id="dest-hoteles" placeholder="Ej. DRRPC o Todos">
-      <label style="display:flex;align-items:center;gap:6px;margin-top:10px;"><input type="checkbox" id="dest-reporte-diario" style="width:auto;" checked> Recibe reporte diario</label>
-      <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="dest-alerta-severidad" style="width:auto;"> Recibe alerta de alta severidad (base, aparte del ruteo por área)</label>
-      <button class="primary" onclick="crearDestinatarioUI()">Agregar destinatario</button>
-      <div id="dest-msg"></div>
+      <div id="dest-form-wrap">
+        <label>Nombre</label>
+        <input type="text" id="dest-nombre">
+        <label>Email</label>
+        <input type="email" id="dest-email">
+        <label>Hoteles (código separado por coma, o "Todos")</label>
+        <input type="text" id="dest-hoteles" placeholder="Ej. DRRPC o Todos">
+        <label style="display:flex;align-items:center;gap:6px;margin-top:10px;"><input type="checkbox" id="dest-reporte-diario" style="width:auto;" checked> Recibe reporte diario</label>
+        <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="dest-severidad-todas" style="width:auto;"> Recibe alertas de severidad TODAS</label>
+        <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="dest-severidad-ab" style="width:auto;"> Recibe alertas severidad A&amp;B (Bar/Restaurante/Cocina)</label>
+        <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="dest-severidad-comejen" style="width:auto;"> Recibe alertas severidad Comején/Termitas y Bedbugs/Chinches</label>
+        <button class="primary" onclick="crearDestinatarioUI()">Agregar destinatario</button>
+        <div id="dest-msg"></div>
+      </div>
       <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
       <div id="lista-destinatarios"></div>
     </section>
   </main>
+  <div style="text-align:left;padding:10px 16px;font-size:11px;font-style:italic;color:var(--text-muted);">Diseñado por RAP</div>
 </div>
 
 <script>
 // ============ CONFIGURACION ============
 // Pegar aqui la URL del Web App despues de implementar el Code.gs
 const API_URL = 'https://script.google.com/macros/s/AKfycbykosmCSSYmWNEqRZE6_6vLDAIHZfW-2n6RW3M9e6kM0Az2jw2uyL05VWVYPqRTeOY7/exec';
-const FRONTEND_VERSION = 'v15-2026-08-08';
+const FRONTEND_VERSION = 'v17-2026-08-23';
 
 let SESSION = null;
 let CATALOGOS = { areas: [], insectos: [], habitaciones: [] };
@@ -308,8 +320,8 @@ function logout() {
 // ============ NAV POR ROL ============
 const TABS_POR_ROL = {
   Master:            ['capturar','preventivo','reportes','dashboard','usuarios','hoteles','destinatarios'],
-  CreadorProveedor:  ['capturar','preventivo','reportes','dashboard','usuarios'],
-  CreadorOperacion:  ['capturar','reportes','dashboard','usuarios'],
+  CreadorProveedor:  ['capturar','preventivo','reportes','dashboard','usuarios','destinatarios'],
+  CreadorOperacion:  ['capturar','reportes','dashboard','usuarios','destinatarios'],
   Fumigacion:        ['capturar','preventivo','reportes','dashboard'],
   Operacion:         ['capturar','reportes','dashboard']
 };
@@ -389,6 +401,7 @@ function poblarSelects() {
   if (barSel) barSel.innerHTML = (CATALOGOS.bares || []).map(b => `<option value="${b}">${b}</option>`).join('');
   const cocinaSel = document.getElementById('cap-cocina');
   if (cocinaSel) cocinaSel.innerHTML = (CATALOGOS.cocinas || []).map(c => `<option value="${c}">${c}</option>`).join('');
+  document.getElementById('cap-nombre-reportero-wrap').classList.toggle('hidden', !SESSION.esGenerico);
   toggleHabitacionField();
   toggleInsectoOtro();
 
@@ -418,19 +431,32 @@ function toggleInsectoOtro() {
   if (!esOtros) document.getElementById('cap-insecto-otro').value = '';
 }
 
+const AREAS_UBICACION_LIBRE = ['Piscina', 'Areas comunes', 'Jardin', 'Oficinas'];
+
 function toggleHabitacionField() {
   const area = document.getElementById('cap-area').value;
   const esHabitacion = area === 'Habitacion';
   const esRestaurante = area === 'Restaurante';
   const esBar = area === 'Bar';
   const esCocina = area === 'Cocina';
+  const esUbicacionLibre = AREAS_UBICACION_LIBRE.indexOf(area) !== -1;
 
   document.getElementById('cap-hab-wrap').classList.toggle('hidden', !esHabitacion);
   document.getElementById('cap-rest-wrap').classList.toggle('hidden', !esRestaurante);
   document.getElementById('cap-bar-wrap').classList.toggle('hidden', !esBar);
   document.getElementById('cap-cocina-wrap').classList.toggle('hidden', !esCocina);
+  document.getElementById('cap-ubicacion-wrap').classList.toggle('hidden', !esUbicacionLibre);
 
   if (!esHabitacion) document.getElementById('cap-habitacion').value = ''; // nunca dejar un numero pegado de un area anterior
+  if (!esUbicacionLibre) document.getElementById('cap-ubicacion').value = '';
+
+  // Chinches/BedBugs solo existe como opcion cuando el area es Habitacion
+  const insectoSel = document.getElementById('cap-insecto');
+  const valorPrevio = insectoSel.value;
+  const listaFiltrada = esHabitacion ? CATALOGOS.insectos : CATALOGOS.insectos.filter(i => i !== 'BedBugs-Chinches');
+  insectoSel.innerHTML = listaFiltrada.map(i => `<option value="${i}">${i}</option>`).join('');
+  if (listaFiltrada.indexOf(valorPrevio) !== -1) insectoSel.value = valorPrevio;
+  toggleInsectoOtro();
 }
 
 // ============ CAPTURAR REPORTE ============
@@ -472,6 +498,10 @@ function enviarReporte() {
   else if (area === 'Restaurante') detalle = document.getElementById('cap-restaurante').value;
   else if (area === 'Bar') detalle = document.getElementById('cap-bar').value;
   else if (area === 'Cocina') detalle = document.getElementById('cap-cocina').value;
+  else if (AREAS_UBICACION_LIBRE.indexOf(area) !== -1) {
+    detalle = document.getElementById('cap-ubicacion').value.trim();
+    if (!detalle) { document.getElementById('cap-msg').innerHTML = '<div class="msg error">Escribe dónde exactamente ocurrió.</div>'; return; }
+  }
 
   let tipoInsecto = document.getElementById('cap-insecto').value;
   if (tipoInsecto === 'Otros') {
@@ -479,10 +509,17 @@ function enviarReporte() {
     if (!especifica) { document.getElementById('cap-msg').innerHTML = '<div class="msg error">Escribe qué insecto es en el campo "¿Cuál?".</div>'; return; }
     tipoInsecto = 'Otros: ' + especifica;
   }
+
+  let nombreReportero = '';
+  if (SESSION.esGenerico) {
+    nombreReportero = document.getElementById('cap-nombre-reportero').value.trim();
+    if (!nombreReportero) { document.getElementById('cap-msg').innerHTML = '<div class="msg error">Escribe tu nombre y apellido para poder reportar.</div>'; return; }
+  }
+
   const observaciones = document.getElementById('cap-obs').value.trim();
 
   fotoABase64('cap-foto').then(foto => {
-    const data = { hotel: HOTEL_ACTUAL, area, habitacion: detalle, tipoInsecto, usuarioReporta: SESSION.email, fotoInicial: foto, observaciones };
+    const data = { hotel: HOTEL_ACTUAL, area, habitacion: detalle, tipoInsecto, usuarioReporta: SESSION.email, fotoInicial: foto, observaciones, esGenerico: SESSION.esGenerico, nombreReportero };
     callApi('crearReporte', { data: JSON.stringify(data) })
       .then(res => {
         const etiqueta = { Habitacion: 'esta habitación', Restaurante: 'este restaurante', Bar: 'este bar' }[area];
@@ -495,8 +532,10 @@ function enviarReporte() {
         document.getElementById('cap-restaurante').selectedIndex = 0;
         document.getElementById('cap-bar').selectedIndex = 0;
         document.getElementById('cap-cocina').selectedIndex = 0;
+        document.getElementById('cap-ubicacion').value = '';
         document.getElementById('cap-insecto').selectedIndex = 0;
         document.getElementById('cap-insecto-otro').value = '';
+        if (SESSION.esGenerico) document.getElementById('cap-nombre-reportero').value = '';
         document.getElementById('cap-obs').value = '';
         document.getElementById('cap-foto').value = '';
         toggleHabitacionField();
@@ -624,6 +663,11 @@ function pintarReportes() {
       </div>
       ${r.observaciones ? '<div style="font-size:13px;margin-top:6px;">' + r.observaciones + '</div>' : ''}
       ${r.fotoInicial ? '<img src="' + r.fotoInicial + '" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;">' : ''}
+      ${r.notasBloqueo ? `
+        <div style="margin-top:8px;padding:8px;background:#FCEBEB;border-radius:6px;">
+          <div style="font-size:11px;color:var(--red);font-weight:600;">No se pudo completar antes:</div>
+          <div style="font-size:12px;white-space:pre-line;margin-top:2px;">${r.notasBloqueo}</div>
+        </div>` : ''}
       ${r.estado === 'Realizado' ? `
         <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
           <div style="font-size:12px;color:var(--text-muted);">Evidencia de cierre · ${r.usuarioCierre}</div>
@@ -637,6 +681,11 @@ function pintarReportes() {
           <label>Foto de evidencia</label>
           <input type="file" id="cierre-foto-${r.id}" accept="image/*">
           <button class="secondary" onclick="cerrarReporteUI('${r.id}')">Cerrar reporte</button>
+        </div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);">
+          <label>¿No se pudo hacer el trabajo? Explica por qué (se queda en Pendiente)</label>
+          <textarea id="bloqueo-com-${r.id}" placeholder="Ej. No se levantó la habitación, no se pudo entrar, etc."></textarea>
+          <button class="secondary" style="color:var(--amber);border-color:var(--amber);" onclick="registrarBloqueoUI('${r.id}')">No se pudo completar</button>
         </div>` : ''}
       ${SESSION.rol === 'Master' ? `<button class="secondary" style="width:auto;padding:4px 10px;margin-top:8px;color:var(--red);border-color:var(--red);" onclick="borrarReporteUI('${r.id}')">Borrar (dato de prueba)</button>` : ''}
     </div>
@@ -646,6 +695,14 @@ function pintarReportes() {
 function borrarReporteUI(id) {
   if (!confirm('¿Borrar este reporte definitivamente? Úsalo solo para datos de prueba, no hay forma de deshacerlo.')) return;
   callApi('borrarReporte', { emailActor: SESSION.email, id }).then(cargarReportes).catch(err => alert(err.message));
+}
+
+function registrarBloqueoUI(id) {
+  const motivo = document.getElementById('bloqueo-com-' + id).value.trim();
+  if (!motivo) { alert('Escribe el motivo por el que no se pudo completar.'); return; }
+  callApi('registrarBloqueoReporte', { emailActor: SESSION.email, id, motivo })
+    .then(() => cargarReportes())
+    .catch(err => alert(err.message));
 }
 
 function cerrarReporteUI(id) {
@@ -903,7 +960,7 @@ function cargarUsuarios() {
   callApi('listarUsuarios', { emailActor: SESSION.email }).then(usuarios => {
     document.getElementById('lista-usuarios').innerHTML = usuarios.map(u => `
       <div class="user-row ${u.estado === 'Inactivo' ? 'inactive-row' : ''}">
-        <div>${u.nombre}<div class="role">${u.email} · ${u.rol}${u.clave ? ' · Código: <strong>' + u.clave + '</strong>' : ''}</div></div>
+        <div>${u.nombre}<div class="role">${u.email} · ${u.rol}${u.esGenerico ? ' · Genérico' : ''}${u.clave ? ' · Código: <strong>' + u.clave + '</strong>' : ''}</div></div>
         <div>
           <span class="badge ${u.estado === 'Activo' ? 'realizado' : 'pendiente'}">${u.estado}</span>
           ${u.estado === 'Activo' ? `<button class="secondary" style="width:auto;padding:4px 10px;margin-left:6px;" onclick="inactivarUsuarioUI('${u.email}')">Inactivar</button>` : ''}
@@ -917,12 +974,14 @@ function crearUsuarioUI() {
   const nombre = document.getElementById('us-nombre').value.trim();
   const email = document.getElementById('us-email').value.trim();
   const rol = document.getElementById('us-rol').value;
-  callApi('crearUsuario', { emailActor: SESSION.email, email, nombre, rol })
+  const esGenerico = document.getElementById('us-generico').checked;
+  callApi('crearUsuario', { emailActor: SESSION.email, email, nombre, rol, esGenerico })
     .then(res => {
       document.getElementById('us-msg').innerHTML =
         '<div class="msg ok">Usuario creado. Clave asignada: <strong>' + res.clave + '</strong></div>';
       document.getElementById('us-nombre').value = '';
       document.getElementById('us-email').value = '';
+      document.getElementById('us-generico').checked = false;
       cargarUsuarios();
     })
     .catch(err => {
@@ -1008,12 +1067,36 @@ function cambiarEstadoHotel(codigo, activar) {
     .catch(err => alert(err.message));
 }
 
-// ============ DESTINATARIOS (solo Master) ============
+// ============ DESTINATARIOS ============
 function cargarDestinatarios() {
-  callApi('listarDestinatarios', {}).then(lista => {
+  const puedeCrear = SESSION.rol === 'Master' || SESSION.rol === 'CreadorOperacion' || SESSION.rol === 'CreadorProveedor';
+  document.getElementById('dest-form-wrap').classList.toggle('hidden', !puedeCrear);
+
+  callApi('listarDestinatarios', { emailActor: SESSION.email }).then(lista => {
+    if (!lista.length) { document.getElementById('lista-destinatarios').innerHTML = '<p style="font-size:13px;color:var(--text-muted);">Sin destinatarios en tu alcance todavía.</p>'; return; }
     document.getElementById('lista-destinatarios').innerHTML = lista.map(d => `
       <div class="user-row ${d.estado === 'Inactivo' ? 'inactive-row' : ''}">
-        <div>${d.nombre}<div class="role">${d.email} · ${d.hoteles} · ${d.reporteDiario === 'Si' ? 'Reporte diario' : ''}${d.reporteDiario === 'Si' && d.alertaSeveridad === 'Si' ? ' + ' : ''}${d.alertaSeveridad === 'Si' ? 'Alerta severidad' : ''}</div></div>
+        <div style="flex:1;">
+          ${d.nombre}<div class="role">${d.email} · ${d.hoteles}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
+            <label style="display:flex;align-items:center;gap:5px;width:auto;font-size:12px;">
+              <input type="checkbox" style="width:auto;" ${d.reporteDiario === 'Si' ? 'checked' : ''}
+                onchange="actualizarTiposDestinatarioUI('${d.email}', this.checked, ${d.severidadTodas === 'Si'}, ${d.severidadAB === 'Si'}, ${d.severidadComejenBedbugs === 'Si'})"> Reporte diario
+            </label>
+            <label style="display:flex;align-items:center;gap:5px;width:auto;font-size:12px;">
+              <input type="checkbox" style="width:auto;" ${d.severidadTodas === 'Si' ? 'checked' : ''}
+                onchange="actualizarTiposDestinatarioUI('${d.email}', ${d.reporteDiario === 'Si'}, this.checked, ${d.severidadAB === 'Si'}, ${d.severidadComejenBedbugs === 'Si'})"> Severidad TODAS
+            </label>
+            <label style="display:flex;align-items:center;gap:5px;width:auto;font-size:12px;">
+              <input type="checkbox" style="width:auto;" ${d.severidadAB === 'Si' ? 'checked' : ''}
+                onchange="actualizarTiposDestinatarioUI('${d.email}', ${d.reporteDiario === 'Si'}, ${d.severidadTodas === 'Si'}, this.checked, ${d.severidadComejenBedbugs === 'Si'})"> Severidad A&amp;B
+            </label>
+            <label style="display:flex;align-items:center;gap:5px;width:auto;font-size:12px;">
+              <input type="checkbox" style="width:auto;" ${d.severidadComejenBedbugs === 'Si' ? 'checked' : ''}
+                onchange="actualizarTiposDestinatarioUI('${d.email}', ${d.reporteDiario === 'Si'}, ${d.severidadTodas === 'Si'}, ${d.severidadAB === 'Si'}, this.checked)"> Severidad Comején/Bedbugs
+            </label>
+          </div>
+        </div>
         <div>
           <span class="badge ${d.estado === 'Activo' ? 'realizado' : 'pendiente'}">${d.estado}</span>
           <button class="secondary" style="width:auto;padding:4px 10px;margin-left:6px;" onclick="cambiarEstadoDestinatarioUI('${d.email}', ${d.estado === 'Activo' ? 'false' : 'true'})">${d.estado === 'Activo' ? 'Inactivar' : 'Reactivar'}</button>
@@ -1023,20 +1106,29 @@ function cargarDestinatarios() {
   });
 }
 
+function actualizarTiposDestinatarioUI(email, reporteDiario, severidadTodas, severidadAB, severidadComejenBedbugs) {
+  callApi('actualizarTiposDestinatario', { emailActor: SESSION.email, email, reporteDiario, severidadTodas, severidadAB, severidadComejenBedbugs })
+    .catch(err => { alert(err.message); cargarDestinatarios(); });
+}
+
 function crearDestinatarioUI() {
   const nombre = document.getElementById('dest-nombre').value.trim();
   const email = document.getElementById('dest-email').value.trim();
   const hoteles = document.getElementById('dest-hoteles').value.trim() || 'Todos';
   const reporteDiario = document.getElementById('dest-reporte-diario').checked;
-  const alertaSeveridad = document.getElementById('dest-alerta-severidad').checked;
-  callApi('agregarDestinatario', { emailActor: SESSION.email, email, nombre, hoteles, reporteDiario, alertaSeveridad })
+  const severidadTodas = document.getElementById('dest-severidad-todas').checked;
+  const severidadAB = document.getElementById('dest-severidad-ab').checked;
+  const severidadComejenBedbugs = document.getElementById('dest-severidad-comejen').checked;
+  callApi('agregarDestinatario', { emailActor: SESSION.email, email, nombre, hoteles, reporteDiario, severidadTodas, severidadAB, severidadComejenBedbugs })
     .then(() => {
       document.getElementById('dest-msg').innerHTML = '<div class="msg ok">Destinatario agregado.</div>';
       document.getElementById('dest-nombre').value = '';
       document.getElementById('dest-email').value = '';
       document.getElementById('dest-hoteles').value = '';
       document.getElementById('dest-reporte-diario').checked = true;
-      document.getElementById('dest-alerta-severidad').checked = false;
+      document.getElementById('dest-severidad-todas').checked = false;
+      document.getElementById('dest-severidad-ab').checked = false;
+      document.getElementById('dest-severidad-comejen').checked = false;
       cargarDestinatarios();
     })
     .catch(err => { document.getElementById('dest-msg').innerHTML = '<div class="msg error">' + err.message + '</div>'; });
