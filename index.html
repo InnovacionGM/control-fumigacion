@@ -265,7 +265,7 @@
 // ============ CONFIGURACION ============
 // Pegar aqui la URL del Web App despues de implementar el Code.gs
 const API_URL = 'https://script.google.com/macros/s/AKfycbykosmCSSYmWNEqRZE6_6vLDAIHZfW-2n6RW3M9e6kM0Az2jw2uyL05VWVYPqRTeOY7/exec';
-const FRONTEND_VERSION = 'v17-2026-08-23';
+const FRONTEND_VERSION = 'v18-2026-08-24';
 
 let SESSION = null;
 let CATALOGOS = { areas: [], insectos: [], habitaciones: [] };
@@ -977,8 +977,9 @@ function crearUsuarioUI() {
   const esGenerico = document.getElementById('us-generico').checked;
   callApi('crearUsuario', { emailActor: SESSION.email, email, nombre, rol, esGenerico })
     .then(res => {
+      const origen = res.yaExistiaEnCatalogo ? ' (ya existía en el Catálogo Maestro)' : ' (nuevo en el Catálogo Maestro)';
       document.getElementById('us-msg').innerHTML =
-        '<div class="msg ok">Usuario creado. Clave asignada: <strong>' + res.clave + '</strong></div>';
+        '<div class="msg ok">Usuario creado. Código: <strong>' + res.clave + '</strong>' + origen + '</div>';
       document.getElementById('us-nombre').value = '';
       document.getElementById('us-email').value = '';
       document.getElementById('us-generico').checked = false;
