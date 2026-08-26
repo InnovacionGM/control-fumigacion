@@ -186,6 +186,7 @@
         <button class="secondary" onclick="cargarDashboard()">Aplicar</button>
       </div>
       <div class="kpi-grid" id="kpi-grid"></div>
+      <div class="kpi-grid" id="kpi-tiempo-cierre" style="margin-top:-6px;"></div>
       <div class="card">
         <h2>Reportes por tipo de insecto</h2>
         <div style="position:relative;height:220px"><canvas id="chart-insecto"></canvas></div>
@@ -193,6 +194,10 @@
       <div class="card">
         <h2>Reportes por área</h2>
         <div style="position:relative;height:220px"><canvas id="chart-area"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Reportes cerrados por usuario</h2>
+        <div style="position:relative;height:220px"><canvas id="chart-cierres-usuario"></canvas></div>
       </div>
       <div class="card">
         <h2>Cobertura preventiva por edificio (últimos 15 días)</h2>
@@ -265,12 +270,13 @@
 // ============ CONFIGURACION ============
 // Pegar aqui la URL del Web App despues de implementar el Code.gs
 const API_URL = 'https://script.google.com/macros/s/AKfycbykosmCSSYmWNEqRZE6_6vLDAIHZfW-2n6RW3M9e6kM0Az2jw2uyL05VWVYPqRTeOY7/exec';
-const FRONTEND_VERSION = 'v18-2026-08-24';
+const FRONTEND_VERSION = 'v19-2026-08-25';
 
 let SESSION = null;
 let CATALOGOS = { areas: [], insectos: [], habitaciones: [] };
 let HOTEL_ACTUAL = 'DRRPC';
 let HOTELES_ACTIVOS = [{ codigo: 'DRRPC', nombre: 'Dreams Royal Beach Punta Cana' }];
+let NOMBRES_USUARIOS = {};
 
 let solicitudesActivas = 0;
 function mostrarCargando(mostrar) {
@@ -347,6 +353,7 @@ function iniciarApp() {
   callApi('catalogos', { hotel: HOTEL_ACTUAL }).then(cat => {
     CATALOGOS = cat;
     if (cat.hotelesActivos && cat.hotelesActivos.length) HOTELES_ACTIVOS = cat.hotelesActivos;
+    NOMBRES_USUARIOS = cat.nombresPorEmail || {};
     poblarSelects();
     actualizarSelectorHotel();
   });
@@ -387,7 +394,7 @@ function actualizarVistaActual() {
   else if (TAB_ACTUAL === 'usuarios') cargarUsuarios();
   else if (TAB_ACTUAL === 'hoteles') cargarHoteles();
   else if (TAB_ACTUAL === 'destinatarios') cargarDestinatarios();
-  else callApi('catalogos', { hotel: HOTEL_ACTUAL }).then(cat => { CATALOGOS = cat; poblarSelects(); });
+  else callApi('catalogos', { hotel: HOTEL_ACTUAL }).then(cat => { CATALOGOS = cat; NOMBRES_USUARIOS = cat.nombresPorEmail || {}; poblarSelects(); });
 }
 
 function poblarSelects() {
@@ -653,7 +660,7 @@ function pintarReportes() {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
         <label style="display:flex;gap:8px;align-items:flex-start;flex:1;">
           <input type="checkbox" class="chk-reporte" value="${r.id}" style="margin-top:4px;">
-          <strong>${r.area}${r.habitacion ? ' · Hab. ' + r.habitacion : ''}</strong>
+          <strong>${r.area}${r.habitacion ? ' · ' + (r.area === 'Habitacion' ? 'Hab. ' : '') + r.habitacion : ''}</strong>
         </label>
         <span class="badge ${r.estado === 'Pendiente' ? 'pendiente' : 'realizado'}">${r.estado}</span>
       </div>
@@ -661,6 +668,7 @@ function pintarReportes() {
         ${r.tipoInsecto} · ${new Date(r.fechaHora).toLocaleString('es-DO')}
         ${r.severidad === 'Alta' ? ' · <span class="badge alta">Alta severidad</span>' : ''}
       </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Reportado por: ${r.nombreReportero || NOMBRES_USUARIOS[r.usuarioReporta] || r.usuarioReporta}</div>
       ${r.observaciones ? '<div style="font-size:13px;margin-top:6px;">' + r.observaciones + '</div>' : ''}
       ${r.fotoInicial ? '<img src="' + r.fotoInicial + '" style="max-width:100%;border-radius:8px;margin-top:8px;display:block;">' : ''}
       ${r.notasBloqueo ? `
@@ -670,7 +678,7 @@ function pintarReportes() {
         </div>` : ''}
       ${r.estado === 'Realizado' ? `
         <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
-          <div style="font-size:12px;color:var(--text-muted);">Evidencia de cierre · ${r.usuarioCierre}</div>
+          <div style="font-size:12px;color:var(--text-muted);">Evidencia de cierre · ${NOMBRES_USUARIOS[r.usuarioCierre] || r.usuarioCierre}</div>
           ${r.fotoEvidencia ? '<img src="' + r.fotoEvidencia + '" style="max-width:100%;border-radius:8px;margin-top:6px;display:block;">' : ''}
           <div style="font-size:13px;margin-top:6px;">${r.comentarioCierre}</div>
         </div>` : ''}
@@ -718,7 +726,7 @@ function cerrarReporteUI(id) {
 }
 
 // ============ DASHBOARD ============
-let chartInsecto, chartArea;
+let chartInsecto, chartArea, chartCierresUsuario;
 
 document.addEventListener('click', e => {
   if (e.target.matches('#dash-filtros button')) {
@@ -759,6 +767,7 @@ function cargarDashboard() {
   });
   callApi('coberturaPreventiva', { hotel: HOTEL_ACTUAL }).then(pintarHeatmap);
   callApi('metasPreventivas', { hotel: HOTEL_ACTUAL }).then(metas => pintarMetasPreventivo('metas-dashboard', metas));
+  callApi('estadisticasDesempeno', { desde: desde.toISOString(), hasta: hasta.toISOString(), hotel: HOTEL_ACTUAL }).then(pintarDesempeno);
 }
 
 function pintarKPIs(reportes) {
@@ -772,6 +781,24 @@ function pintarKPIs(reportes) {
     <div class="kpi" style="cursor:pointer;" onclick="irAReportesConFiltro('realizado')"><div class="label">Realizados</div><div class="value">${realizados}</div></div>
     <div class="kpi" style="cursor:pointer;" onclick="irAReportesConFiltro('alta')"><div class="label">Alta severidad</div><div class="value">${alta}</div></div>
   `;
+}
+
+function pintarDesempeno(stats) {
+  const el = document.getElementById('kpi-tiempo-cierre');
+  if (!el) return;
+  const texto = stats.totalCerrados
+    ? (stats.promedioHoras > 0 ? stats.promedioHoras + 'h ' : '') + stats.promedioMinutosResto + 'min'
+    : 'Sin datos';
+  el.innerHTML = `<div class="kpi"><div class="label">Tiempo promedio de cierre</div><div class="value">${texto}</div></div>`;
+
+  const porUsuario = {};
+  stats.cierresPorUsuario.forEach(c => { porUsuario[c.nombre] = c.total; });
+  if (chartCierresUsuario) chartCierresUsuario.destroy();
+  chartCierresUsuario = new Chart(document.getElementById('chart-cierres-usuario'), {
+    type: 'bar',
+    data: { labels: Object.keys(porUsuario), datasets: [{ label: 'Reportes cerrados', data: Object.values(porUsuario), backgroundColor: '#0F6E56' }] },
+    options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } } }
+  });
 }
 
 function contarPor(reportes, campo) {
@@ -1006,7 +1033,7 @@ function actualizarSelectorHotel() {
 
 function cambiarHotel() {
   HOTEL_ACTUAL = document.getElementById('selector-hotel').value;
-  callApi('catalogos', { hotel: HOTEL_ACTUAL }).then(cat => { CATALOGOS = cat; poblarSelects(); actualizarVistaActual(); });
+  callApi('catalogos', { hotel: HOTEL_ACTUAL }).then(cat => { CATALOGOS = cat; NOMBRES_USUARIOS = cat.nombresPorEmail || {}; poblarSelects(); actualizarVistaActual(); });
 }
 
 // ============ HOTELES (solo Master) ============
