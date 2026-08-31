@@ -270,7 +270,7 @@
 // ============ CONFIGURACION ============
 // Pegar aqui la URL del Web App despues de implementar el Code.gs
 const API_URL = 'https://script.google.com/macros/s/AKfycbykosmCSSYmWNEqRZE6_6vLDAIHZfW-2n6RW3M9e6kM0Az2jw2uyL05VWVYPqRTeOY7/exec';
-const FRONTEND_VERSION = 'v19-2026-08-25';
+const FRONTEND_VERSION = 'v20-2026-08-25';
 
 let SESSION = null;
 let CATALOGOS = { areas: [], insectos: [], habitaciones: [] };
@@ -339,7 +339,8 @@ function iniciarApp() {
   document.getElementById('user-name').textContent = SESSION.nombre;
   document.getElementById('user-role').textContent = SESSION.rol;
 
-  const tabs = TABS_POR_ROL[SESSION.rol] || ['capturar'];
+  const tabs = (TABS_POR_ROL[SESSION.rol] || ['capturar']).slice();
+  if (SESSION.accesoPreventivo && tabs.indexOf('preventivo') === -1) tabs.splice(1, 0, 'preventivo');
   const nav = document.getElementById('nav-tabs');
   nav.innerHTML = '';
   tabs.forEach((t, i) => {
@@ -983,14 +984,29 @@ function compartir() {
 }
 
 // ============ USUARIOS ============
+const ROLES_DISPONIBLES = ['Master','CreadorProveedor','CreadorOperacion','Fumigacion','Operacion'];
+
 function cargarUsuarios() {
   callApi('listarUsuarios', { emailActor: SESSION.email }).then(usuarios => {
     document.getElementById('lista-usuarios').innerHTML = usuarios.map(u => `
       <div class="user-row ${u.estado === 'Inactivo' ? 'inactive-row' : ''}">
-        <div>${u.nombre}<div class="role">${u.email} · ${u.rol}${u.esGenerico ? ' · Genérico' : ''}${u.clave ? ' · Código: <strong>' + u.clave + '</strong>' : ''}</div></div>
+        <div style="flex:1;">
+          ${u.nombre}<div class="role">${u.email} · ${u.rol}${u.esGenerico ? ' · Genérico' : ''}${u.clave ? ' · Código: <strong>' + u.clave + '</strong>' : ''}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;align-items:center;">
+            <label style="display:flex;align-items:center;gap:5px;width:auto;font-size:12px;">
+              <input type="checkbox" style="width:auto;" ${u.accesoPreventivo ? 'checked' : ''} onchange="otorgarAccesoPreventivoUI('${u.email}', this.checked)"> Acceso a Preventivo
+            </label>
+            ${SESSION.rol === 'Master' ? `
+              <select style="width:auto;font-size:12px;padding:3px 6px;" onchange="cambiarRolUsuarioUI('${u.email}', this.value)">
+                ${ROLES_DISPONIBLES.map(r => `<option value="${r}" ${r === u.rol ? 'selected' : ''}>${r}</option>`).join('')}
+              </select>` : ''}
+          </div>
+        </div>
         <div>
           <span class="badge ${u.estado === 'Activo' ? 'realizado' : 'pendiente'}">${u.estado}</span>
-          ${u.estado === 'Activo' ? `<button class="secondary" style="width:auto;padding:4px 10px;margin-left:6px;" onclick="inactivarUsuarioUI('${u.email}')">Inactivar</button>` : ''}
+          ${u.estado === 'Activo'
+            ? `<button class="secondary" style="width:auto;padding:4px 10px;margin-left:6px;" onclick="inactivarUsuarioUI('${u.email}')">Inactivar</button>`
+            : `<button class="secondary" style="width:auto;padding:4px 10px;margin-left:6px;" onclick="activarUsuarioUI('${u.email}')">Reactivar</button>`}
         </div>
       </div>
     `).join('');
@@ -1019,7 +1035,23 @@ function crearUsuarioUI() {
 
 function inactivarUsuarioUI(email) {
   if (!confirm('¿Inactivar a ' + email + '? El histórico se conserva, solo pierde acceso.')) return;
-  callApi('inactivarUsuario', { emailActor: SESSION.email, emailObjetivo: email }).then(cargarUsuarios);
+  callApi('inactivarUsuario', { emailActor: SESSION.email, emailObjetivo: email }).then(cargarUsuarios).catch(err => alert(err.message));
+}
+
+function activarUsuarioUI(email) {
+  callApi('activarUsuario', { emailActor: SESSION.email, emailObjetivo: email }).then(cargarUsuarios).catch(err => alert(err.message));
+}
+
+function otorgarAccesoPreventivoUI(email, otorgar) {
+  callApi('otorgarAccesoPreventivo', { emailActor: SESSION.email, emailObjetivo: email, otorgar })
+    .catch(err => { alert(err.message); cargarUsuarios(); });
+}
+
+function cambiarRolUsuarioUI(email, nuevoRol) {
+  if (!confirm('¿Cambiar el rol de ' + email + ' a ' + nuevoRol + '?')) { cargarUsuarios(); return; }
+  callApi('cambiarRolUsuario', { emailActor: SESSION.email, emailObjetivo: email, nuevoRol })
+    .then(cargarUsuarios)
+    .catch(err => { alert(err.message); cargarUsuarios(); });
 }
 
 // ============ SELECTOR DE HOTEL ============
